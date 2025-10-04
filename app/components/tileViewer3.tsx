@@ -4,6 +4,58 @@
 import React, { useEffect, useRef, useState } from "react";
 import type OpenSeadragon from "openseadragon";
 import JSZip from "jszip";
+import { xml2json } from "xml-js"; // optional helper if you prefer parsing XML to JSON (not required)
+import toGeoJSON from "togeojson"; // note: togeojson exports DOM parsers; we'll use via DOMParser
+import type OpenSeadragon from "openseadragon";
+// (If togeojson import issues, you can also parse KML manually or use another KML->GeoJSON lib.)
+
+type BodyKey = "moon" | "mars" | "mercury" | "ceres";
+
+const TREK_TEMPLATES: Record<
+  BodyKey,
+  Array<{ id: string; title: string; template: string; example: string }>
+> = {
+  moon: [
+    {
+      id: "lro_wac",
+      title: "LRO WAC Mosaic (global 303ppd)",
+      // THIS is the WMTS tile URL template used by Trek (real pattern)
+      template:
+        "https://trek.nasa.gov/tiles/Moon/EQ/LRO_WAC_Mosaic_Global_303ppd_v02/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+      example:
+        "https://trek.nasa.gov/tiles/Moon/EQ/LRO_WAC_Mosaic_Global_303ppd_v02/1.0.0/default/default028mm/0/0/0.jpg",
+    },
+  ],
+  mars: [
+    {
+      id: "mars_mgs_mola",
+      title: "Mars MGS MOLA shaded relief (example)",
+      template:
+        "https://trek.nasa.gov/tiles/Mars/EQ/Mars_MGS_MOLA_ClrShade_merge_global_463m/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+      example:
+        "https://trek.nasa.gov/tiles/Mars/EQ/Mars_MGS_MOLA_ClrShade_merge_global_463m/1.0.0/default/default028mm/0/0/0.jpg",
+    },
+  ],
+  mercury: [
+    {
+      id: "messenger_mdis",
+      title: "Mercury MESSENGER MDIS basemap",
+      template:
+        "https://trek.nasa.gov/tiles/Mercury/EQ/Mercury_MESSENGER_MDIS_Basemap_EnhancedColor_Mosaic_Global_665m/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+      example:
+        "https://trek.nasa.gov/tiles/Mercury/EQ/Mercury_MESSENGER_MDIS_Basemap_EnhancedColor_Mosaic_Global_665m/1.0.0/default/default028mm/0/0/0.jpg",
+    },
+  ],
+  ceres: [
+    {
+      id: "ceres_dawn",
+      title: "Ceres Dawn FC HAMO (example)",
+      template:
+        "https://trek.nasa.gov/tiles/Ceres/EQ/Ceres_Dawn_FC_HAMO_ClrShade_DLR_Global_60ppd_Oct2016/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+      example:
+        "https://trek.nasa.gov/tiles/Ceres/EQ/Ceres_Dawn_FC_HAMO_ClrShade_DLR_Global_60ppd_Oct2016/1.0.0/default/default028mm/0/0/0.jpg",
+    },
+  ],
 import toGeoJSON from "togeojson";
 import type { FeatureCollection, Point } from "geojson";
 
@@ -143,6 +195,10 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
         viewportConstraint: new osd.Rect(0, -0.1, 1, 1.2), // Constrain viewport more strictly
       });
 
+      viewer.addHandler('open', function() {
+        addOverlays();
+      });
+
       setViewerObj(viewer);
     })();
 
@@ -224,7 +280,11 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
   // Example: query USGS pygeoapi crater DB (Mars Robbins) — returns JSON features.
   // This endpoint is provided by USGS Astrogeology (pygeoapi). Example:
   // https://astrogeology.usgs.gov/pygeoapi/collections/mars/robbinsv1/items?limit=10
-  async function queryMarsCraterDB() {
+  async function queryMarsCraterDB(q: string) {
+    const moonKmz =
+      "https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/MARS_nomenclature_center_pts.kmz";
+    const pts = await fetchGazetteerKMZ(moonKmz);
+    setFeatures(pts.slice(0, 500)); // don't load too many into UI instantly
     const base =
       "https://astrogeology.usgs.gov/pygeoapi/collections/mars/robbinsv1/items?f=json";
     // We can use 'limit' and bbox params per pygeoapi. Here we do a simple limited fetch.
@@ -262,22 +322,106 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
     setFeatures(items.slice(0, 1000));
   }
 
-  // Utility: pan/zoom viewer to lon/lat assuming equirectangular projection and the same virtual width/height used above
+  // Add overlay elements to the viewer
+  function addOverlays() {
+    if (!viewerObj) return;
+
+    // Remove existing overlays
+    viewerObj.removeAllOverlays();
+
+    // Add center crosshair
+    const centerElement = document.createElement('div');
+    centerElement.style.cssText = `
+      width: 20px;
+      height: 20px;
+      position: absolute;
+      pointer-events: none;
+      border: 2px solid rgba(255, 255, 255, 0.8);
+      border-radius: 50%;
+    `;
+    
+    // Add the center overlay (stays fixed in viewport center)
+    viewerObj.addOverlay({
+      element: centerElement,
+      location: new viewerObj.viewport.pointFromPixel(
+        viewerObj.viewport.getContainerSize().x / 2,
+        viewerObj.viewport.getContainerSize().y / 2
+      ),
+      placement: 'CENTER',
+      checkResize: false
+    });
+
+  // Utility: pan/zoom viewer to lon/lat for NASA Trek tiles
   function panToLonLat(lon: number, lat: number, zoomLevel = 4) {
     if (!viewerObj) return;
-    const imgW = 360 * 1024;
-    const imgH = 180 * 1024;
-    // convert lon/lat to pixel coords on the virtual image
-    // lon: -180..180 -> x: 0..imgW
-    const x = ((lon + 180) / 360) * imgW;
-    // lat: -90..90 -> y  (flip Y because image coordinates top=0)
+    
+    // NASA Trek uses tiles in a Web Mercator-like projection
+    // The source image represents 360° of longitude from 0° to 360° (not -180° to 180°)
+    // and latitude from 90° to -90° (north to south)
+    
+    // Normalize longitude to 0-360° range
+    lon = ((lon % 360) + 360) % 360;
+    
+    // Constrain latitude to -90° to 90°
+    lat = Math.max(-90, Math.min(90, lat));
+    
+    // Get the current tile source dimensions
+    const source = viewerObj.world.getItemAt(0);
+    const imgW = source.source.width;
+    const imgH = source.source.height;
+    
+    // Convert to tile coordinates
+    // For longitude: 0° -> 0, 360° -> imgW
+    const x = (lon / 360) * imgW;
+    // For latitude: 90° -> 0, -90° -> imgH (matching Trek's coordinate system)
     const y = ((90 - lat) / 180) * imgH;
-    // OpenSeadragon uses viewport coordinates; convert image points -> viewport points
+    
+    // Create feature marker overlay
+    const markerElement = document.createElement('div');
+    markerElement.style.cssText = `
+      width: 24px;
+      height: 24px;
+      position: absolute;
+      pointer-events: none;
+      border: 3px solid rgba(255, 100, 100, 0.8);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      animation: pulse 2s infinite;
+    `;
+
+    // Add pulse animation style
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes pulse {
+        0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+        50% { transform: translate(-50%, -50%) scale(1.5); opacity: 0.5; }
+        100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+      }
+    `;
+    document.head.appendChild(style);
+
+    // Remove old feature markers
+    const oldMarkers = document.querySelectorAll('.feature-marker');
+    oldMarkers.forEach(marker => marker.remove());
+    markerElement.classList.add('feature-marker');
+
+      // Add the feature marker overlay
+    viewerObj.addOverlay({
+      element: markerElement,
+      location: viewerObj.viewport.imageToViewportCoordinates(x, y),
+      placement: 'CENTER',
+      checkResize: false
+    });    // Debug log to verify coordinate transformation
+    console.log(`Panning to: lon=${lon}°, lat=${lat}°, pixel=(${x}, ${y})`);
+    
+    // Convert to viewport coordinates and pan with animation
     const point = viewerObj.viewport.imageToViewportCoordinates(x, y);
-    // Set center and zoom (zoom is viewer.viewport.getZoom(); choose a value)
-    viewerObj.viewport.panTo(point);
-    // zoom level (we use zoomTo)
-    viewerObj.viewport.zoomTo(zoomLevel, point);
+    viewerObj.viewport.panTo(point, true);
+    
+    // Zoom with a slight delay to ensure pan completes first
+    setTimeout(() => {
+      viewerObj.viewport.zoomTo(zoomLevel, point, true);
+    }, 100);
   }
 
   // Filter features by searchText (case-insensitive substring match on name)
