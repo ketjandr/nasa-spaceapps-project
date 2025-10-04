@@ -6,6 +6,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from .config import settings
 from .gibs import (
@@ -37,6 +38,59 @@ app.add_middleware(
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# ========== SEARCH ENDPOINTS ==========
+
+class SearchRequest(BaseModel):
+    query: str
+    context: Optional[dict] = None
+
+
+@app.post("/search")
+async def search_location(request: SearchRequest):
+    """
+    Search for planetary features by natural language query
+    
+    Examples:
+    - {"query": "Show me Tycho crater on the Moon"}
+    - {"query": "Find valleys on Mars"}
+    - {"query": "Show me Olympus Mons"}
+    """
+    try:
+        from .search_engine import search_features
+        result = search_features(request.query)
+        return result
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/search/test")
+async def test_search():
+    """Test endpoint to verify search engine is loaded"""
+    try:
+        from .search_engine import search_engine
+        return {
+            'status': 'ok',
+            'features_loaded': len(search_engine.features),
+            'sample_bodies': list(set(f.get('body') for f in search_engine.features[:100])) if search_engine.features else [],
+            'sample_features': [
+                {'name': f.get('name'), 'category': f.get('category'), 'body': f.get('body')}
+                for f in search_engine.features[:5]
+            ] if search_engine.features else []
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            'status': 'error',
+            'error': str(e),
+            'message': 'Run: python backend/scripts/kmzparser.py moon'
+        }
+
+# ========== END SEARCH ENDPOINTS ==========
 
 
 @app.get("/layers", response_model=List[LayerSummary])
