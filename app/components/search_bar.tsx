@@ -1,20 +1,29 @@
 "use client";
 
-import { useState, FormEvent, ChangeEvent } from "react";
+import { useState, useEffect, FormEvent, ChangeEvent } from "react";
 import { Search, ArrowUp } from "lucide-react";
 
 interface GlassSearchBarProps {
   onSearch?: (query: string) => void;
   placeholder?: string;
   className?: string;
+  value?: string; // External value prop for controlled component
 }
 
 export default function GlassSearchBar({ 
   onSearch, 
   placeholder = "Search planetary features, locations, coordinates...",
-  className = ""
+  className = "",
+  value: externalValue
 }: GlassSearchBarProps) {
   const [query, setQuery] = useState<string>("");
+
+  // Sync internal state with external value when it changes
+  useEffect(() => {
+    if (externalValue !== undefined) {
+      setQuery(externalValue);
+    }
+  }, [externalValue]);
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
