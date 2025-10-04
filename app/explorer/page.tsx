@@ -49,7 +49,8 @@ function ExplorerContent() {
             <div className="flex-1">
               <GlassSearchBar 
                 onSearch={handleSearch}
-                placeholder="Search planetary features..."
+                value={searchQuery}
+                placeholder={searchQuery || "Search planetary features, locations, coordinates..."}
               />
             </div>
           </div>

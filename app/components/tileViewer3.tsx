@@ -323,13 +323,6 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
               Reload Mars Craters
             </button>
           )}
-
-          <input
-            placeholder="search text"
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-            style={{ marginLeft: "auto" }}
-          />
         </div>
 
         <div

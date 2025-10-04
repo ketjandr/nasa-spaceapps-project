@@ -34,17 +34,17 @@ export default function Home() {
         </div>
 
         {/* Glass Search Bar - Centered and Prominent */}
-        <div className="relative z-10 w-full max-w-4xl px-4">
+        <div className="relative z-10 w-full max-w-4xl px-4 flex flex-col items-center">
           <GlassSearchBar 
             onSearch={handleGlobalSearch}
-            placeholder="Search for craters, mountains, coordinates (e.g., 'Tycho Crater', 'Mare Tranquillitatis')..."
+            placeholder="Search for craters, mountains, coordinates (e.g., 'Sinus Lunicus', 'De Vico')..."
           />
           
           {/* Search suggestions */}
           <div className="mt-6 text-center">
             <p className="text-sm text-white/40 mb-3">Popular searches:</p>
             <div className="flex flex-wrap justify-center gap-2">
-              {['Tycho Crater', 'Olympus Mons', 'Valles Marineris', 'Mare Tranquillitatis'].map((term) => (
+              {['Marco Polo P', 'Bürg', 'Brown E', 'Short B'].map((term) => (
                 <button
                   key={term}
                   onClick={() => handleGlobalSearch(term)}
