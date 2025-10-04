@@ -1,7 +1,9 @@
 # NASA Space Apps 2025 — StellarCanvas
 
 ## Run
-1) `cp .env.example .env.local` and confirm `NEXT_PUBLIC_BACKEND_URL` matches your FastAPI host
+1) `cp .env.example .env.local` and set:
+   - `NEXT_PUBLIC_BACKEND_URL` if you expose FastAPI somewhere else
+   - `NEXT_PUBLIC_GAIA_SKYMAP_URL` to override the default Milky Way panorama (optional)
 2) `python3 -m venv .venv && source .venv/bin/activate`
 3) `pip install -r backend/requirements.txt`
 4) `uvicorn backend.main:app --reload`
@@ -10,5 +12,5 @@
 
 ## Stack
 - Next.js + TypeScript + Tailwind
-- OpenSeadragon deep-zoom viewer
-- FastAPI proxy for NASA GIBS imagery
+- OpenSeadragon deep-zoom viewer (single image mode)
+- Milky Way / planetary WMTS tiles proxied via FastAPI

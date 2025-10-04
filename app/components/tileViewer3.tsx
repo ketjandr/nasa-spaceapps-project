@@ -2,76 +2,124 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import type OpenSeadragon from "openseadragon";
 import JSZip from "jszip";
-import { xml2json } from "xml-js"; // optional helper if you prefer parsing XML to JSON (not required)
-import toGeoJSON from "togeojson"; // note: togeojson exports DOM parsers; we'll use via DOMParser
-// (If togeojson import issues, you can also parse KML manually or use another KML->GeoJSON lib.)
+import toGeoJSON from "togeojson";
+import type { FeatureCollection, Point } from "geojson";
 
-type BodyKey = "moon" | "mars" | "mercury" | "ceres";
+type BodyKey =
+  | "milky_way"
+  | "moon"
+  | "mars"
+  | "mercury"
+  | "ceres"
+  | "unknown";
 
-const TREK_TEMPLATES: Record<
-  BodyKey,
-  Array<{ id: string; title: string; template: string; example: string }>
-> = {
-  moon: [
-    {
-      id: "lro_wac",
-      title: "LRO WAC Mosaic (global 303ppd)",
-      // THIS is the WMTS tile URL template used by Trek (real pattern)
-      template:
-        "https://trek.nasa.gov/tiles/Moon/EQ/LRO_WAC_Mosaic_Global_303ppd_v02/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
-      example:
-        "https://trek.nasa.gov/tiles/Moon/EQ/LRO_WAC_Mosaic_Global_303ppd_v02/1.0.0/default/default028mm/0/0/0.jpg",
-    },
-  ],
-  mars: [
-    {
-      id: "mars_mgs_mola",
-      title: "Mars MGS MOLA shaded relief (example)",
-      template:
-        "https://trek.nasa.gov/tiles/Mars/EQ/Mars_MGS_MOLA_ClrShade_merge_global_463m/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
-      example:
-        "https://trek.nasa.gov/tiles/Mars/EQ/Mars_MGS_MOLA_ClrShade_merge_global_463m/1.0.0/default/default028mm/0/0/0.jpg",
-    },
-  ],
-  mercury: [
-    {
-      id: "messenger_mdis",
-      title: "Mercury MESSENGER MDIS basemap",
-      template:
-        "https://trek.nasa.gov/tiles/Mercury/EQ/Mercury_MESSENGER_MDIS_Basemap_EnhancedColor_Mosaic_Global_665m/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
-      example:
-        "https://trek.nasa.gov/tiles/Mercury/EQ/Mercury_MESSENGER_MDIS_Basemap_EnhancedColor_Mosaic_Global_665m/1.0.0/default/default028mm/0/0/0.jpg",
-    },
-  ],
-  ceres: [
-    {
-      id: "ceres_dawn",
-      title: "Ceres Dawn FC HAMO (example)",
-      template:
-        "https://trek.nasa.gov/tiles/Ceres/EQ/Ceres_Dawn_FC_HAMO_ClrShade_DLR_Global_60ppd_Oct2016/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
-      example:
-        "https://trek.nasa.gov/tiles/Ceres/EQ/Ceres_Dawn_FC_HAMO_ClrShade_DLR_Global_60ppd_Oct2016/1.0.0/default/default028mm/0/0/0.jpg",
-    },
-  ],
+type DatasetListItem = {
+  id: string;
+  title: string;
+  body?: string | null;
+};
+
+type ViewerConfigResponse = {
+  id: string;
+  title: string;
+  tile_url_template: string;
+  min_zoom: number;
+  max_zoom: number;
+  tile_size: number;
+  projection?: string | null;
+  attribution?: string | null;
+  body?: string | null;
+};
+
+const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "";
+const backendBase = backendUrl ? backendUrl.replace(/\/$/, "") : "";
+
+type PlanetFeature = {
+  name: string;
+  lat: number;
+  lon: number;
+  diamkm?: number;
 };
 
 export default function TileViewer() {
   const viewerRef = useRef<HTMLDivElement | null>(null);
-  const [viewerObj, setViewerObj] = useState<any>(null);
-  const [selectedBody, setSelectedBody] = useState<BodyKey>("moon");
-  const [selectedLayerId, setSelectedLayerId] = useState<string>(
-    TREK_TEMPLATES["moon"][0].id
+  const [viewerObj, setViewerObj] = useState<OpenSeadragon.Viewer | null>(null);
+  const [datasets, setDatasets] = useState<DatasetListItem[]>([]);
+  const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
+  const [layerConfig, setLayerConfig] = useState<ViewerConfigResponse | null>(
+    null
   );
-  const [features, setFeatures] = useState<any[]>([]); // planet features (name, lat, lon)
+  const [selectedBody, setSelectedBody] = useState<BodyKey>("unknown");
+  const [features, setFeatures] = useState<PlanetFeature[]>([]);
   const [searchText, setSearchText] = useState("");
 
-  // Auto-load features for Moon and Mars when selectedBody changes
+  useEffect(() => {
+    if (!backendUrl) {
+      console.warn("NEXT_PUBLIC_BACKEND_URL not set");
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const response = await fetch(`${backendUrl}/viewer/layers`);
+        if (!response.ok) {
+          throw new Error(`Failed to load datasets (${response.status})`);
+        }
+        const data = (await response.json()) as DatasetListItem[];
+        if (cancelled) return;
+        setDatasets(data);
+        if (data.length > 0) {
+          setSelectedLayerId(data[0].id);
+        }
+      } catch (error) {
+        console.error(error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!backendUrl || !selectedLayerId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const response = await fetch(
+          `${backendUrl}/viewer/layers/${selectedLayerId}`
+        );
+        if (!response.ok) {
+          throw new Error(`Failed to load layer ${selectedLayerId}`);
+        }
+        const data = (await response.json()) as ViewerConfigResponse;
+        if (cancelled) return;
+        setLayerConfig(data);
+        const body = (data.body || "unknown") as BodyKey;
+        setSelectedBody(body);
+      } catch (error) {
+        console.error(error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedLayerId]);
+
   useEffect(() => {
     if (selectedBody === "moon") {
       loadMoonGazetteer();
     } else if (selectedBody === "mars") {
-      queryMarsCraterDB("");
+      queryMarsCraterDB();
     } else {
       setFeatures([]);
     }
@@ -80,26 +128,25 @@ export default function TileViewer() {
 
   // Keep openseadragon import in effect (client-only)
   useEffect(() => {
-    let viewer: any = null;
-    let osd: any = null;
+    let viewer: OpenSeadragon.Viewer | null = null;
+    let osd: typeof import("openseadragon") | null = null;
     let mounted = true;
 
     (async () => {
+      if (!layerConfig) return;
       const OSDModule = await import("openseadragon");
-      osd = OSDModule.default ?? OSDModule;
+      osd = (OSDModule.default ?? OSDModule) as typeof import("openseadragon");
       if (!viewerRef.current || !mounted) return;
 
-      // default tile source (we set a 'fake' size; WMTS will tile dynamically)
-      const activeTemplate = getActiveTemplate();
-
       // Set maxLevel and tileSize for the tiling scheme
-      const maxLevel = 8; // or your desired max zoom
-      const tileSize = 256;
+      const minZoom = layerConfig.min_zoom;
+      const maxLevel = layerConfig.max_zoom - layerConfig.min_zoom;
+      const tileSize = layerConfig.tile_size;
       // At maxLevel, columns = 2^(maxLevel+1), rows = 2^maxLevel
       const width = tileSize * Math.pow(2, maxLevel + 1);
       const height = tileSize * Math.pow(2, maxLevel);
 
-      const tileSource = {
+      const tileSource: OpenSeadragon.TileSourceOptions = {
         width,
         height,
         tileSize,
@@ -108,19 +155,20 @@ export default function TileViewer() {
         getTileUrl: function (level: number, x: number, y: number) {
           const maxCols = Math.pow(2, level + 1);
           const maxRows = Math.pow(2, level);
-          
+
           // Handle horizontal wrapping
           x = ((x % maxCols) + maxCols) % maxCols;
-          
+
           // Constrain vertical position
           if (y < 0 || y >= maxRows) return null;
-          
-          const z = level;
-          const template = activeTemplate.template;
-          return template
+
+          const z = level + minZoom;
+          return layerConfig.tile_url_template
             .replace("{z}", String(z))
-            .replace("{row}", String(y))
-            .replace("{col}", String(x));
+            .replace("{x}", String(x))
+            .replace("{y}", String(y))
+            .replace("{col}", String(x))
+            .replace("{row}", String(y));
         },
       };
 
@@ -150,13 +198,7 @@ export default function TileViewer() {
       mounted = false;
       if (viewer) viewer.destroy();
     };
-  }, [selectedBody, selectedLayerId]);
-
-  // Helper to pick the currently selected template object
-  function getActiveTemplate() {
-    const list = TREK_TEMPLATES[selectedBody];
-    return list.find((l) => l.id === selectedLayerId) || list[0];
-  }
+  }, [layerConfig]);
 
   // USGS Gazetteer KML/KMZ example links are available from the USGS "KML and Shapefile downloads" page.
   // Example KMZ (center points) for Moon and Mars (listed on USGS downloads page):
@@ -168,10 +210,17 @@ export default function TileViewer() {
   // See Sources at the bottom for the official page link.
 
   // Fetch and parse a KMZ (USGS Gazetteer center points) and convert to GeoJSON (togeojson)
-  async function fetchGazetteerKMZ(kmzUrl: string) {
+  async function fetchGazetteerKMZ(kmzUrl: string): Promise<PlanetFeature[]> {
     try {
-      // Use our proxy API route instead of fetching directly
-      const proxyUrl = `/api/proxy/kmz?url=${encodeURIComponent(kmzUrl)}`;
+      if (!backendBase) {
+        console.warn("NEXT_PUBLIC_BACKEND_URL not set; skipping KMZ fetch");
+        return [];
+      }
+
+      const proxyUrl = `${backendBase}/proxy/kmz?url=${encodeURIComponent(
+        kmzUrl
+      )}`;
+
       const r = await fetch(proxyUrl);
       if (!r.ok) {
         console.warn("KMZ fetch failed", r.status, r.statusText);
@@ -191,15 +240,18 @@ export default function TileViewer() {
       // Parse KML into DOM and convert
       const parser = new DOMParser();
       const kmlDoc = parser.parseFromString(kmlText, "application/xml");
-      const geojson = (toGeoJSON as any).kml(kmlDoc);
-      // normalize features to a simple {name, lat, lon}
-      const points: any[] = [];
-      for (const feat of geojson.features || []) {
-        const props = feat.properties || {};
-        const geom = feat.geometry;
-        if (!geom || geom.type !== "Point") continue;
-        const [lon, lat] = geom.coordinates;
-        points.push({ name: props.name || props.Name || "unnamed", lat, lon });
+      const geojson = (toGeoJSON as {
+        kml: (doc: Document) => FeatureCollection<Point, { name?: string; Name?: string }>;
+      }).kml(kmlDoc);
+      const points: PlanetFeature[] = [];
+      for (const feat of geojson.features ?? []) {
+        if (feat.geometry?.type !== "Point" || !feat.geometry.coordinates) continue;
+        const [lon, lat] = feat.geometry.coordinates;
+        points.push({
+          name: feat.properties?.name || feat.properties?.Name || "unnamed",
+          lat: Number(lat),
+          lon: Number(lon),
+        });
       }
       return points;
     } catch (err) {
@@ -220,7 +272,7 @@ export default function TileViewer() {
   // Example: query USGS pygeoapi crater DB (Mars Robbins) — returns JSON features.
   // This endpoint is provided by USGS Astrogeology (pygeoapi). Example:
   // https://astrogeology.usgs.gov/pygeoapi/collections/mars/robbinsv1/items?limit=10
-  async function queryMarsCraterDB(q: string) {
+  async function queryMarsCraterDB() {
     const base =
       "https://astrogeology.usgs.gov/pygeoapi/collections/mars/robbinsv1/items?f=json";
     // We can use 'limit' and bbox params per pygeoapi. Here we do a simple limited fetch.
@@ -230,13 +282,31 @@ export default function TileViewer() {
       return;
     }
     const j = await resp.json();
-    // pygeoapi returns features with properties lon_e, lat, craterid, diamkm
-    const items = (j.features || []).map((f: any) => ({
-      name: f.properties.craterid || f.properties.name || "crater",
-      lat: f.properties.lat,
-      lon: f.properties.lon_e,
-      diamkm: f.properties.diamkm,
-    }));
+    type MarsApiFeature = {
+      properties: {
+        craterid?: string;
+        name?: string;
+        lat?: number;
+        lon_e?: number;
+        diamkm?: number;
+      };
+    };
+    const rawFeatures = (j.features ?? []) as MarsApiFeature[];
+    const items: PlanetFeature[] = rawFeatures
+      .map((f) => {
+        const lat = f.properties.lat;
+        const lon = f.properties.lon_e;
+        if (typeof lat !== "number" || typeof lon !== "number") {
+          return null;
+        }
+        return {
+          name: f.properties.craterid || f.properties.name || "crater",
+          lat,
+          lon,
+          diamkm: f.properties.diamkm,
+        } satisfies PlanetFeature;
+      })
+      .filter((f): f is PlanetFeature => Boolean(f));
     setFeatures(items.slice(0, 1000));
   }
 
@@ -268,64 +338,45 @@ export default function TileViewer() {
   return (
     <div style={{ display: "flex", gap: 12 }}>
       <div style={{ flex: 1 }}>
-        <div style={{ marginBottom: 8 }}>
-          <label>
-            Body:
+        <div style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
+          <label style={{ display: "flex", flexDirection: "column", fontSize: 14 }}>
+            Dataset
             <select
-              value={selectedBody}
-              onChange={(e) => {
-                const b = e.target.value as BodyKey;
-                setSelectedBody(b);
-                setSelectedLayerId(TREK_TEMPLATES[b][0].id);
-              }}
-            >
-              <option value="moon">Moon</option>
-              <option value="mars">Mars</option>
-              <option value="mercury">Mercury</option>
-              <option value="ceres">Ceres</option>
-            </select>
-          </label>
-
-          <label style={{ marginLeft: 8 }}>
-            Layer:
-            <select
-              value={selectedLayerId}
+              value={selectedLayerId ?? ""}
               onChange={(e) => setSelectedLayerId(e.target.value)}
             >
-              {TREK_TEMPLATES[selectedBody].map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.title}
+              {datasets.map((dataset) => (
+                <option key={dataset.id} value={dataset.id}>
+                  {dataset.title}
                 </option>
               ))}
             </select>
           </label>
 
-          <button
-            style={{ marginLeft: 8 }}
-            onClick={() => setSelectedLayerId(getActiveTemplate().id)}
-          >
-            Load layer
-          </button>
+          {layerConfig?.attribution && (
+            <span style={{ fontSize: 12, color: "#888" }}>
+              {layerConfig.attribution}
+            </span>
+          )}
 
-          <button
-            style={{ marginLeft: 8 }}
-            onClick={loadMoonGazetteer}
-          >
-            Load Moon Gazetteer (KMZ)
-          </button>
-
-          <button
-            style={{ marginLeft: 8 }}
-            onClick={() => queryMarsCraterDB(searchText)}
-          >
-            Load Mars crater DB (Robbins)
-          </button>
+          {selectedBody === "moon" && (
+            <button style={{ marginLeft: "auto" }} onClick={loadMoonGazetteer}>
+              Reload Moon Gazetteer
+            </button>
+          )}
+          {selectedBody === "mars" && (
+            <button
+              onClick={() => queryMarsCraterDB()}
+            >
+              Reload Mars Craters
+            </button>
+          )}
 
           <input
             placeholder="search text"
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
-            style={{ marginLeft: 8 }}
+            style={{ marginLeft: "auto" }}
           />
         </div>
 
@@ -348,7 +399,7 @@ export default function TileViewer() {
           </div>
         ) : (
           <ul style={{ padding: 0, listStyle: "none" }}>
-            {filteredFeatures.map((f: any, i: number) => (
+            {filteredFeatures.map((f, i) => (
               <li key={i} style={{ marginBottom: 8 }}>
                 <button
                   style={{ width: "100%", textAlign: "left" }}
