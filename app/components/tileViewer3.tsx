@@ -43,7 +43,11 @@ type PlanetFeature = {
   diamkm?: number;
 };
 
-export default function TileViewer() {
+interface TileViewerProps {
+  externalSearchQuery?: string;
+}
+
+export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
   const viewerRef = useRef<HTMLDivElement | null>(null);
   const [viewerObj, setViewerObj] = useState<OpenSeadragon.Viewer | null>(null);
   const [datasets, setDatasets] = useState<DatasetListItem[]>([]);
@@ -55,66 +59,14 @@ export default function TileViewer() {
   const [features, setFeatures] = useState<PlanetFeature[]>([]);
   const [searchText, setSearchText] = useState("");
 
+  // Update internal search text when external search query changes
   useEffect(() => {
-    if (!backendUrl) {
-      console.warn("NEXT_PUBLIC_BACKEND_URL not set");
-      return;
+    if (externalSearchQuery) {
+      setSearchText(externalSearchQuery);
     }
+  }, [externalSearchQuery]);
 
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const response = await fetch(`${backendUrl}/viewer/layers`);
-        if (!response.ok) {
-          throw new Error(`Failed to load datasets (${response.status})`);
-        }
-        const data = (await response.json()) as DatasetListItem[];
-        if (cancelled) return;
-        setDatasets(data);
-        if (data.length > 0) {
-          setSelectedLayerId(data[0].id);
-        }
-      } catch (error) {
-        console.error(error);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!backendUrl || !selectedLayerId) {
-      return;
-    }
-
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const response = await fetch(
-          `${backendUrl}/viewer/layers/${selectedLayerId}`
-        );
-        if (!response.ok) {
-          throw new Error(`Failed to load layer ${selectedLayerId}`);
-        }
-        const data = (await response.json()) as ViewerConfigResponse;
-        if (cancelled) return;
-        setLayerConfig(data);
-        const body = (data.body || "unknown") as BodyKey;
-        setSelectedBody(body);
-      } catch (error) {
-        console.error(error);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedLayerId]);
-
+  // Auto-load features for Moon and Mars when selectedBody changes
   useEffect(() => {
     if (selectedBody === "moon") {
       loadMoonGazetteer();
