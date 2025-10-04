@@ -13,27 +13,67 @@ type BodyKey = "moon" | "mars" | "mercury" | "ceres";
 
 const TREK_TEMPLATES: Record<
   BodyKey,
-  Array<{ id: string; title: string; template: string; example: string }>
+  Array<{ 
+    id: string; 
+    title: string; 
+    template: string; 
+    example: string;
+    type?: 'base' | 'overlay' | 'temporal';
+    temporalRange?: { start: string; end: string; interval: string };
+  }>
 > = {
   moon: [
     {
       id: "lro_wac",
       title: "LRO WAC Mosaic (global 303ppd)",
-      // THIS is the WMTS tile URL template used by Trek (real pattern)
+      type: "base",
       template:
         "https://trek.nasa.gov/tiles/Moon/EQ/LRO_WAC_Mosaic_Global_303ppd_v02/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
       example:
         "https://trek.nasa.gov/tiles/Moon/EQ/LRO_WAC_Mosaic_Global_303ppd_v02/1.0.0/default/default028mm/0/0/0.jpg",
     },
+    {
+      id: "lro_lola",
+      title: "Moon LOLA Elevation",
+      type: "overlay",
+      template:
+        "https://trek.nasa.gov/tiles/Moon/EQ/LRO_LOLA_ClrShade_Global_128ppd_v04/1.0.0/default/default028mm/{z}/{row}/{col}.png",
+      example:
+        "https://trek.nasa.gov/tiles/Moon/EQ/LRO_LOLA_ClrShade_Global_128ppd_v04/1.0.0/default/default028mm/0/0/0.png",
+    },
   ],
   mars: [
     {
       id: "mars_mgs_mola",
-      title: "Mars MGS MOLA shaded relief (example)",
+      title: "Mars MGS MOLA Elevation",
+      type: "base",
       template:
         "https://trek.nasa.gov/tiles/Mars/EQ/Mars_MGS_MOLA_ClrShade_merge_global_463m/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
       example:
         "https://trek.nasa.gov/tiles/Mars/EQ/Mars_MGS_MOLA_ClrShade_merge_global_463m/1.0.0/default/default028mm/0/0/0.jpg",
+    },
+    {
+      id: "mars_hirise",
+      title: "Mars HiRISE Imagery",
+      type: "overlay",
+      template:
+        "https://trek.nasa.gov/tiles/Mars/EQ/Mars_HiRISE_Mosaic_Global_256ppd/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+      example:
+        "https://trek.nasa.gov/tiles/Mars/EQ/Mars_HiRISE_Mosaic_Global_256ppd/1.0.0/default/default028mm/0/0/0.jpg",
+    },
+    {
+      id: "mars_weather",
+      title: "Mars Daily Weather Maps",
+      type: "temporal",
+      template:
+        "https://trek.nasa.gov/tiles/Mars/EQ/Mars_MRO_MARCI_Weather_{date}/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+      example:
+        "https://trek.nasa.gov/tiles/Mars/EQ/Mars_MRO_MARCI_Weather_20230101/1.0.0/default/default028mm/0/0/0.jpg",
+      temporalRange: {
+        start: "2023-01-01",
+        end: "2023-12-31",
+        interval: "P1D" // ISO 8601 duration - 1 day
+      }
     },
   ],
   mercury: [
@@ -101,12 +141,18 @@ interface TileViewerProps {
 
 export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
   const viewerRef = useRef<HTMLDivElement | null>(null);
+  const compareViewerRef = useRef<HTMLDivElement | null>(null);
   const [viewerObj, setViewerObj] = useState<OpenSeadragon.Viewer | null>(null);
+  const [compareViewerObj, setCompareViewerObj] = useState<any>(null);
   const [datasets, setDatasets] = useState<DatasetListItem[]>([]);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const [layerConfig, setLayerConfig] = useState<ViewerConfigResponse | null>(
     null
   );
+  const [selectedOverlayId, setSelectedOverlayId] = useState<string>("");
+  const [overlayOpacity, setOverlayOpacity] = useState(0.5);
+  const [viewMode, setViewMode] = useState<"single" | "split" | "overlay">("single");
+  const [selectedDate, setSelectedDate] = useState<string>("");
   const [selectedBody, setSelectedBody] = useState<BodyKey>("unknown");
   const [features, setFeatures] = useState<PlanetFeature[]>([]);
   const [searchText, setSearchText] = useState("");
@@ -130,6 +176,21 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBody]);
 
+  // Create OpenSeadragon viewer with specified options
+  const createViewer = async (
+    elementRef: React.RefObject<HTMLDivElement | null>,
+    template: typeof TREK_TEMPLATES[BodyKey][0],
+    osd: any
+  ) => {
+    if (!elementRef.current) return null;
+
+    // Wait for the element to be properly mounted
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    const maxLevel = 8;
+    const tileSize = 256;
+    const width = tileSize * Math.pow(2, maxLevel + 1);
+    const height = tileSize * Math.pow(2, maxLevel);
   // Keep openseadragon import in effect (client-only)
   useEffect(() => {
     let viewer: OpenSeadragon.Viewer | null = null;
@@ -150,6 +211,32 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
       const width = tileSize * Math.pow(2, maxLevel + 1);
       const height = tileSize * Math.pow(2, maxLevel);
 
+    const tileSource = {
+      width,
+      height,
+      tileSize,
+      minLevel: 0,
+      maxLevel,
+      getTileUrl: function (level: number, x: number, y: number) {
+        const maxCols = Math.pow(2, level + 1);
+        const maxRows = Math.pow(2, level);
+        // Ensure proper wrapping for both base and overlay layers
+        x = ((x % maxCols) + maxCols) % maxCols;
+        if (y < 0 || y >= maxRows) return null;
+        
+        let url = template.template;
+        if (template.type === 'temporal' && selectedDate) {
+          url = url.replace('{date}', selectedDate.replace(/-/g, ''));
+        }
+        
+        // Ensure x coordinate is properly wrapped for infinite scrolling
+        const wrappedX = x % maxCols;
+        return url
+          .replace("{z}", String(level))
+          .replace("{row}", String(y))
+          .replace("{col}", String(wrappedX));
+      },
+    };
       const tileSource: OpenSeadragon.TileSourceOptions = {
         width,
         height,
@@ -176,34 +263,225 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
         },
       };
 
-      viewer = osd({
-        element: viewerRef.current!,
-        prefixUrl:
-          "https://cdn.jsdelivr.net/npm/openseadragon@latest/build/openseadragon/images/",
-        showNavigator: true,
-        navigatorSizeRatio: 0.15,
-        tileSources: [tileSource],
-        gestureSettingsMouse: { clickToZoom: false },
-        constrainDuringPan: true,
-        homeFillsViewer: true,
-        visibilityRatio: 0.5, // Allow some overflow but not too much
-        minZoomImageRatio: 0.8, // Prevent zooming out too far
-        maxZoomPixelRatio: 2.0, // Limit maximum zoom
-        defaultZoomLevel: 1,
-        wrapHorizontal: true,
-        wrapVertical: false,
-        viewportConstraint: new osd.Rect(0, -0.1, 1, 1.2), // Constrain viewport more strictly
-      });
+    const viewer = new osd({
+      element: elementRef.current,
+      prefixUrl: "https://cdn.jsdelivr.net/npm/openseadragon@latest/build/openseadragon/images/",
+      showNavigator: true,
+      navigatorSizeRatio: 0.15,
+      tileSources: [tileSource],
+      gestureSettingsMouse: { clickToZoom: false },
+      constrainDuringPan: true,
+      homeFillsViewer: true,
+      visibilityRatio: 0.5,
+      minZoomImageRatio: 0.8,
+      maxZoomPixelRatio: 2.0,
+      defaultZoomLevel: 1,
+      wrapHorizontal: true,
+      wrapVertical: false,
+      viewportConstraint: new osd.Rect(0, -0.1, 1, 1.2),
+      immediateRender: true,
+      preserveImageSizeOnResize: true,
+      // Prevent animation during sync to avoid feedback loops
+      animationTime: 0,
+      springStiffness: 5,
+      maxImageCacheCount: 200
+    });
 
       viewer.addHandler('open', function() {
-        addOverlays();
-      });
+        addOverlays(viewer);
+      });    return viewer;
+  };
 
-      setViewerObj(viewer);
+  // Initialize and sync viewers
+  useEffect(() => {
+    let mounted = true;
+    let mainViewer: any = null;
+    let compareViewer: any = null;
+
+    // Cleanup function to destroy viewers
+    let cleanup = () => {
+      if (mainViewer) {
+        mainViewer.destroy();
+        mainViewer = null;
+      }
+      if (compareViewer) {
+        compareViewer.destroy();
+        compareViewer = null;
+      }
+    };
+
+    // Debounce function to limit the rate of updates
+    const debounce = (func: Function, wait: number) => {
+      let timeout: NodeJS.Timeout;
+      return function executedFunction(...args: any[]) {
+        const later = () => {
+          clearTimeout(timeout);
+          func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+      };
+    };
+
+    // Function to sync viewers
+    const syncViewers = (sourceViewer: any, targetViewer: any) => {
+      if (!sourceViewer || !targetViewer) return;
+
+      let isUpdating = false;
+      const debouncedSync = debounce(() => {
+        if (isUpdating || !sourceViewer || !targetViewer) return;
+        
+        try {
+          isUpdating = true;
+          const center = sourceViewer.viewport.getCenter();
+          const zoom = sourceViewer.viewport.getZoom();
+          
+          // Only update if there's a significant change
+          const currentCenter = targetViewer.viewport.getCenter();
+          const currentZoom = targetViewer.viewport.getZoom();
+          
+          const centerDiff = Math.abs(center.x - currentCenter.x) + Math.abs(center.y - currentCenter.y);
+          const zoomDiff = Math.abs(zoom - currentZoom);
+          
+          if (centerDiff > 0.001 || zoomDiff > 0.001) {
+            targetViewer.viewport.panTo(center, false);
+            targetViewer.viewport.zoomTo(zoom, null, false);
+          }
+        } catch (error) {
+          console.error('Error syncing viewers:', error);
+        } finally {
+          isUpdating = false;
+        }
+      }, 16); // 60fps rate limit
+
+      const handler = () => {
+        if (!isUpdating) {
+          debouncedSync();
+        }
+      };
+
+      sourceViewer.addHandler('pan', handler);
+      sourceViewer.addHandler('zoom', handler);
+
+      return handler;
+    };
+
+    (async () => {
+      try {
+        // Clean up existing viewers first
+        cleanup();
+
+        // Import OpenSeadragon
+        const OSDModule = await import("openseadragon");
+        const osd = OSDModule.default || OSDModule;
+        
+        // Wait for a tick to ensure DOM is ready
+        await new Promise(resolve => setTimeout(resolve, 0));
+      
+        const activeTemplate = getActiveTemplate();
+        const overlayTemplate = selectedOverlayId ? 
+          TREK_TEMPLATES[selectedBody].find(l => l.id === selectedOverlayId) : 
+          null;
+
+        if (!viewerRef.current) {
+          console.error('Main viewer element not found');
+          return;
+        }
+
+        // Create main viewer
+        mainViewer = await createViewer(viewerRef, activeTemplate, osd);
+        if (!mounted) {
+          cleanup();
+          return;
+        }
+        if (!mainViewer) {
+          console.error('Failed to create main viewer');
+          return;
+        }
+        setViewerObj(mainViewer);
+
+        // Create compare viewer if in split or overlay mode
+        if ((viewMode === "split" || viewMode === "overlay") && overlayTemplate) {
+          if (!compareViewerRef.current) {
+            console.error('Compare viewer element not found');
+            return;
+          }
+          
+          compareViewer = await createViewer(compareViewerRef, overlayTemplate, osd);
+          if (!mounted) {
+            cleanup();
+            return;
+          }
+          if (!compareViewer) {
+            console.error('Failed to create compare viewer');
+            return;
+          }
+          setCompareViewerObj(compareViewer);
+
+          // Set opacity for overlay mode
+          if (viewMode === "overlay" && compareViewer) {
+            try {
+              const item = compareViewer.world.getItemAt(0);
+              if (item && item.setOpacity) {
+                item.setOpacity(overlayOpacity);
+              }
+            } catch (error) {
+              console.error('Error setting overlay opacity:', error);
+            }
+          }
+
+          // Set up viewport synchronization for split and overlay modes
+          if ((viewMode === "split" || viewMode === "overlay") && mainViewer && compareViewer) {
+            // Sync both ways for both split and overlay views to ensure synchronization
+            const mainToCompareHandler = syncViewers(mainViewer, compareViewer);
+            const compareToMainHandler = syncViewers(compareViewer, mainViewer);
+
+            // Clean up sync handlers when component unmounts
+            const originalCleanup = cleanup;
+            cleanup = () => {
+              if (mainToCompareHandler) {
+                mainViewer?.removeHandler('pan', mainToCompareHandler);
+                mainViewer?.removeHandler('zoom', mainToCompareHandler);
+              }
+              if (compareToMainHandler) {
+                compareViewer?.removeHandler('pan', compareToMainHandler);
+                compareViewer?.removeHandler('zoom', compareToMainHandler);
+              }
+              originalCleanup();
+            };
+          }
+        }
+      } catch (error) {
+        console.error('Error initializing viewers:', error);
+        cleanup();
+      }
     })();
 
     return () => {
       mounted = false;
+      cleanup();
+    };
+  }, [selectedBody, selectedLayerId, selectedOverlayId, viewMode, selectedDate]);
+
+  // Update overlay opacity when it changes
+  useEffect(() => {
+    if (viewMode === "overlay" && compareViewerObj) {
+      try {
+        const item = compareViewerObj.world.getItemAt(0);
+        if (item && item.setOpacity) {
+          item.setOpacity(overlayOpacity);
+        }
+      } catch (error) {
+        console.error('Error updating overlay opacity:', error);
+      }
+    }
+  }, [overlayOpacity, compareViewerObj, viewMode]);
+
+  // Helper to pick the currently selected template object
+  function getActiveTemplate() {
+    const list = TREK_TEMPLATES[selectedBody];
+    return list.find((l) => l.id === selectedLayerId) || list[0];
+  }
       if (viewer) viewer.destroy();
     };
   }, [layerConfig]);
@@ -323,12 +601,41 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
   }
 
   // Add overlay elements to the viewer
-  function addOverlays() {
-    if (!viewerObj) return;
+  function addOverlays(viewer: any) {
+    if (!viewer || !viewer.addOverlay) return;
 
-    // Remove existing overlays
-    viewerObj.removeAllOverlays();
+    try {
+      // Clear existing overlays by removing their DOM elements
+      const overlayContainer = viewer.element.querySelector('.overlay-container');
+      if (overlayContainer) {
+        while (overlayContainer.firstChild) {
+          overlayContainer.removeChild(overlayContainer.firstChild);
+        }
+      }
 
+      // Add center crosshair
+      const centerElement = document.createElement('div');
+      centerElement.style.cssText = `
+        width: 20px;
+        height: 20px;
+        position: absolute;
+        pointer-events: none;
+        border: 2px solid rgba(255, 255, 255, 0.8);
+        border-radius: 50%;
+        z-index: 1000;
+      `;
+      
+      // Add the center overlay (stays fixed in viewport center)
+      viewer.addOverlay({
+        element: centerElement,
+        location: viewer.viewport.getCenter(),
+        placement: 'CENTER',
+        checkResize: false
+      });
+    } catch (error) {
+      console.error('Error adding overlays:', error);
+    }
+  }
     // Add center crosshair
     const centerElement = document.createElement('div');
     centerElement.style.cssText = `
@@ -406,12 +713,20 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
     markerElement.classList.add('feature-marker');
 
       // Add the feature marker overlay
-    viewerObj.addOverlay({
-      element: markerElement,
-      location: viewerObj.viewport.imageToViewportCoordinates(x, y),
-      placement: 'CENTER',
-      checkResize: false
-    });    // Debug log to verify coordinate transformation
+    try {
+      if (viewerObj && viewerObj.addOverlay) {
+        viewerObj.addOverlay({
+          element: markerElement,
+          location: viewerObj.viewport.imageToViewportCoordinates(x, y),
+          placement: 'CENTER',
+          checkResize: false
+        });
+      }
+    } catch (error) {
+      console.error('Error adding marker overlay:', error);
+    }
+    
+    // Debug log to verify coordinate transformation
     console.log(`Panning to: lon=${lon}°, lat=${lat}°, pixel=(${x}, ${y})`);
     
     // Convert to viewport coordinates and pan with animation
@@ -449,6 +764,76 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
             </select>
           </label>
 
+          <div style={{ marginLeft: 8, display: 'inline-block' }}>
+            <label>View Mode: </label>
+            <select 
+              value={viewMode}
+              onChange={(e) => setViewMode(e.target.value as "single" | "split" | "overlay")}
+            >
+              <option value="single">Single View</option>
+              <option value="split">Split Screen</option>
+              <option value="overlay">Overlay</option>
+            </select>
+          </div>
+
+          {(viewMode === "split" || viewMode === "overlay") && (
+            <div style={{ marginLeft: 8, display: 'inline-block' }}>
+              <label>Compare Layer: </label>
+              <select
+                value={selectedOverlayId}
+                onChange={(e) => setSelectedOverlayId(e.target.value)}
+              >
+                <option value="">None</option>
+                {TREK_TEMPLATES[selectedBody]
+                  .filter(l => l.type === "overlay" || l.type === "temporal")
+                  .map(l => (
+                    <option key={l.id} value={l.id}>{l.title}</option>
+                  ))
+                }
+              </select>
+            </div>
+          )}
+
+          {viewMode === "overlay" && (
+            <div style={{ marginLeft: 8, display: 'inline-block' }}>
+              <label>Opacity: </label>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.1"
+                value={overlayOpacity}
+                onChange={(e) => setOverlayOpacity(Number(e.target.value))}
+              />
+            </div>
+          )}
+
+          {selectedOverlayId && TREK_TEMPLATES[selectedBody].find(l => l.id === selectedOverlayId)?.type === "temporal" && (
+            <div style={{ marginLeft: 8, display: 'inline-block' }}>
+              <label>Date: </label>
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                min={TREK_TEMPLATES[selectedBody].find(l => l.id === selectedOverlayId)?.temporalRange?.start}
+                max={TREK_TEMPLATES[selectedBody].find(l => l.id === selectedOverlayId)?.temporalRange?.end}
+              />
+            </div>
+          )}
+
+          <button
+            style={{ marginLeft: 8 }}
+            onClick={loadMoonGazetteer}
+          >
+            Load Moon Gazetteer (KMZ)
+          </button>
+
+          <button
+            style={{ marginLeft: 8 }}
+            onClick={() => queryMarsCraterDB(searchText)}
+          >
+            Load Mars crater DB (Robbins)
+          </button>
           {layerConfig?.attribution && (
             <span style={{ fontSize: 12, color: "#888" }}>
               {layerConfig.attribution}
@@ -469,10 +854,68 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
           )}
         </div>
 
-        <div
-          ref={viewerRef}
-          style={{ width: "100%", height: "640px", background: "#000" }}
-        />
+        <div style={{ width: "100%", height: "640px", position: "relative" }}>
+          {/* Main viewer */}
+          <div
+            ref={viewerRef}
+            style={{ 
+              width: viewMode === "split" ? "50%" : "100%", 
+              height: "100%", 
+              background: "#000",
+              position: "absolute",
+              left: 0,
+              top: 0
+            }}
+          />
+          
+          {/* Compare viewer for split/overlay mode */}
+          {(viewMode === "split" || viewMode === "overlay") && (
+            <div
+              ref={compareViewerRef}
+              style={{ 
+                width: viewMode === "split" ? "50%" : "100%", 
+                height: "100%", 
+                background: viewMode === "split" ? "#000" : "transparent",
+                position: "absolute",
+                right: viewMode === "split" ? 0 : undefined,
+                left: viewMode === "overlay" ? 0 : undefined,
+                top: 0,
+                pointerEvents: "auto"
+              }}
+            />
+          )}
+          
+          {/* Overlay controls */}
+          {viewMode === "overlay" && selectedOverlayId && (
+            <div 
+              style={{
+                position: "absolute",
+                bottom: 20,
+                left: "50%",
+                transform: "translateX(-50%)",
+                background: "rgba(0,0,0,0.7)",
+                padding: "8px 16px",
+                borderRadius: 4,
+                color: "white",
+                display: "flex",
+                alignItems: "center",
+                gap: 8
+              }}
+            >
+              <label>Opacity:</label>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.1"
+                value={overlayOpacity}
+                onChange={(e) => setOverlayOpacity(Number(e.target.value))}
+                style={{ width: 100 }}
+              />
+              <span>{Math.round(overlayOpacity * 100)}%</span>
+            </div>
+          )}
+        </div>
       </div>
 
       <div style={{ width: 360, overflow: "auto", borderLeft: "1px solid #ddd", padding: 8 }}>
