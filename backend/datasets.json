@@ -1,0 +1,32 @@
+{
+  "moon_lro_wac": {
+    "id": "moon_lro_wac",
+    "title": "Moon – LRO WAC 303ppd",
+    "body": "moon",
+    "tile_url": "https://trek.nasa.gov/tiles/Moon/EQ/LRO_WAC_Mosaic_Global_303ppd_v02/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+    "min_zoom": 0,
+    "max_zoom": 6,
+    "tile_size": 256,
+    "use_proxy": false
+  },
+  "mars_mro": {
+    "id": "mars_mro",
+    "title": "Mars – MRO Mosaic 1024ppd",
+    "body": "mars",
+    "tile_url": "https://trek.nasa.gov/tiles/Mars/EQ/Mars_MGS_MOLA_ClrShade_merge_global_463m/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+    "min_zoom": 0,
+    "max_zoom": 8,
+    "tile_size": 256,
+    "use_proxy": false
+  },
+  "mercury_messenger": {
+    "id": "mercury_messenger",
+    "title": "Mercury – MESSENGER Mosaic",
+    "body": "mercury",
+    "tile_url": "https://trek.nasa.gov/tiles/Mercury/EQ/Mercury_MESSENGER_MDIS_Basemap_EnhancedColor_Mosaic_Global_665m/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+    "min_zoom": 1,
+    "max_zoom": 7,
+    "tile_size": 256,
+    "use_proxy": false
+  }
+}

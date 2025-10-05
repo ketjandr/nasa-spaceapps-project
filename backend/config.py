@@ -1,18 +1,26 @@
-from pydantic import AnyHttpUrl, BaseModel, Field
+from pathlib import Path
+from typing import Dict, Optional
+
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Dict
+
+
+class DatasetConfig(BaseModel):
+    """Dataset configuration for Trek API tiles"""
+    id: str
+    title: str
+    tile_url: str
+    min_zoom: int = 0
+    max_zoom: int = 18
+    tile_size: int = 256
+    projection: Optional[str] = "EPSG:4326"
+    attribution: Optional[str] = "NASA Trek"
+    body: Optional[str] = None
+    use_proxy: bool = True
 
 
 class Settings(BaseSettings):
-    gibs_base_url: AnyHttpUrl = Field(
-        default="https://gibs.earthdata.nasa.gov",
-        description="Base host for NASA GIBS services.",
-    )
-    gibs_path_prefix: str = Field(
-        default="/wmts",
-        description="Base path prefix for WMTS requests.",
-    )
-    default_projection: str = Field(default="epsg3857")
+    dataset_manifest: Path = Field(default=Path("backend/datasets.json"))
     cache_ttl_seconds: int = Field(default=600)
     
     # OpenAI Settings
@@ -31,35 +39,24 @@ class Settings(BaseSettings):
         env_prefix="BACKEND_",
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="ignore",  # Ignore extra fields from .env (like NEXT_PUBLIC_*)
+        extra="ignore"  # Ignore extra fields from .env (like NEXT_PUBLIC_*)
     )
-
-    @property
-    def wmts_base(self) -> str:
-        prefix = self.gibs_path_prefix.strip("/")
-        base = str(self.gibs_base_url).rstrip("/")
-        return f"{base}/{prefix}"
 
 
 settings = Settings()
 
 
-# Dataset configuration for Trek API tiles
-class DatasetConfig(BaseModel):
-    id: str
-    title: str
-    body: str
-    tile_url: str
-    min_zoom: int = 0
-    max_zoom: int = 18
-    tile_size: int = 256
-    projection: str = "EPSG:4326"
-    attribution: str = "NASA Trek"
-    use_proxy: bool = True
-
-
 def load_datasets() -> Dict[str, DatasetConfig]:
-    """Load Trek API dataset configurations for Moon, Mars, and Mercury"""
+    """Load dataset configurations from JSON manifest or return Trek API defaults"""
+    import json
+    
+    # Try loading from JSON manifest first (main branch approach)
+    if settings.dataset_manifest.exists():
+        with settings.dataset_manifest.open("r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+        return {key: DatasetConfig(**value) for key, value in raw.items()}
+    
+    # Fallback to hardcoded Trek API datasets (backup branch approach)
     datasets = {
         "moon_lro_wac": DatasetConfig(
             id="moon_lro_wac",
