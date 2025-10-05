@@ -3,35 +3,248 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 
-// Image data with keywords
-const imageData = [
-  { image: 'https://picsum.photos/256/256?random=1', title: 'Ear (a)', keywords: ['earbuds', 'audio', 'music', 'ear'], color: '#FFD700' },
-  { image: 'https://picsum.photos/256/256?random=2', title: 'Product Showcase', keywords: ['product', 'design', 'showcase', 'items'], color: '#FF6B6B' },
-  { image: 'https://picsum.photos/256/256?random=3', title: 'Fashion Photo', keywords: ['fashion', 'style', 'photo', 'model'], color: '#4ECDC4' },
-  { image: 'https://picsum.photos/256/256?random=4', title: 'NOTHING Device', keywords: ['nothing', 'tech', 'device', 'phone'], color: '#95E1D3' },
-  { image: 'https://picsum.photos/256/256?random=5', title: 'Tech Layout', keywords: ['tech', 'layout', 'modern', 'design'], color: '#F38181' },
-  { image: 'https://picsum.photos/256/256?random=6', title: 'User Profile', keywords: ['profile', 'user', 'social', 'person'], color: '#AA96DA' },
-  { image: 'https://picsum.photos/256/256?random=7', title: 'Audio Interface', keywords: ['audio', 'interface', 'music', 'sound'], color: '#FCBAD3' },
-  { image: 'https://picsum.photos/256/256?random=8', title: 'Product Grid', keywords: ['product', 'grid', 'catalog', 'items'], color: '#A8D8EA' },
-  { image: 'https://picsum.photos/256/256?random=9', title: 'Lifestyle Shot', keywords: ['lifestyle', 'casual', 'photo'], color: '#FFE66D' },
-  { image: 'https://picsum.photos/256/256?random=10', title: 'Minimal Design', keywords: ['minimal', 'clean', 'simple', 'design'], color: '#C7CEEA' }
+type DatasetListItem = {
+  id: string;
+  title: string;
+  body?: string | null;
+};
+
+type ViewerConfigResponse = {
+  id: string;
+  title: string;
+  tile_url_template: string;
+  min_zoom: number;
+  max_zoom: number;
+  tile_size: number;
+  projection?: string | null;
+  attribution?: string | null;
+  body?: string | null;
+};
+
+type ImageData = {
+  image: string;
+  title: string;
+  keywords: string[];
+  color: string;
+};
+
+const DEFAULT_IMAGE_DATA: ImageData[] = [
+  { image: 'https://picsum.photos/256/256?random=1', title: 'Moonlit Plains', keywords: ['fallback', 'moon'], color: '#FFD700' },
+  { image: 'https://picsum.photos/256/256?random=2', title: 'Crater Valley', keywords: ['fallback', 'mars'], color: '#FF6B6B' },
+  { image: 'https://picsum.photos/256/256?random=3', title: 'Mercury Ridge', keywords: ['fallback', 'mercury'], color: '#4ECDC4' },
+  { image: 'https://picsum.photos/256/256?random=4', title: 'Ceres Dawn', keywords: ['fallback', 'ceres'], color: '#95E1D3' }
 ];
 
 export default function PhotoSphereGallery() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [navHintText, setNavHintText] = useState('Made with ❤️ by Slack Overflow');
   const [isNavHintVisible, setIsNavHintVisible] = useState(false);
+  const [imageData, setImageData] = useState<ImageData[]>(DEFAULT_IMAGE_DATA);
   
   const sceneRef = useRef<{
     animationId: number | null;
   } | null>(null);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL;
+    if (!backendUrl) {
+      return;
+    }
+
+    let cancelled = false;
+    const palette = ['#FFD700', '#FF6B6B', '#4ECDC4', '#95E1D3', '#F38181', '#AA96DA', '#FCBAD3', '#A8D8EA', '#FFE66D', '#C7CEEA'];
+
+    const fillTemplate = (template: string, z: number, x: number, y: number) =>
+      template
+        .replace(/{z}/g, String(z))
+        .replace(/{x}/g, String(x))
+        .replace(/{y}/g, String(y))
+        .replace(/{col}/g, String(x))
+        .replace(/{row}/g, String(y));
+
+    const randomInt = (min: number, max: number) => {
+      if (min === max) return min;
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    };
+
+    async function loadTiles() {
+      try {
+        const listRes = await fetch(`${backendUrl}/viewer/layers`);
+        if (!listRes.ok) {
+          throw new Error('Failed to load layer list');
+        }
+
+        const layers = (await listRes.json()) as DatasetListItem[];
+        if (!layers.length) return;
+
+        // fetch full configs
+        const configs = (
+          await Promise.all(
+            layers.map(async (layer) => {
+              try {
+                const res = await fetch(`${backendUrl}/viewer/layers/${layer.id}`);
+                if (!res.ok) return null;
+                const config = (await res.json()) as ViewerConfigResponse;
+                return { layer, config };
+              } catch (error) {
+                console.error('Config fetch failed', error);
+                return null;
+              }
+            })
+          )
+        ).filter(Boolean) as Array<{ layer: DatasetListItem; config: ViewerConfigResponse }>;
+
+        if (!configs.length) {
+          setImageData(DEFAULT_IMAGE_DATA.slice(0, 50));
+          return;
+        }
+
+        // --- helpers ---
+        const kmzProxy = (url: string) => `${backendUrl}/proxy/kmz?url=${encodeURIComponent(url)}`;
+
+        async function fetchGazetteerKMZ(kmzUrl: string) {
+          try {
+            const r = await fetch(kmzProxy(kmzUrl));
+            if (!r.ok) return [];
+            const buf = await r.arrayBuffer();
+            const zip = await JSZip.loadAsync(buf);
+            const kmlName = Object.keys(zip.files).find((n) => n.toLowerCase().endsWith('.kml'));
+            if (!kmlName) return [];
+            const kmlText = await zip.files[kmlName].async('text');
+            const kmlDoc = new DOMParser().parseFromString(kmlText, 'application/xml');
+            const gj = (toGeoJSON as any).kml(kmlDoc);
+            const pts: Array<{ name: string; lat: number; lon: number }> = [];
+            for (const f of gj.features || []) {
+              if (f.geometry?.type !== 'Point') continue;
+              const [lon, lat] = f.geometry.coordinates || [];
+              if (typeof lat !== 'number' || typeof lon !== 'number') continue;
+              pts.push({
+                name: f.properties?.name || f.properties?.Name || 'unnamed',
+                lat,
+                lon,
+              });
+            }
+            return pts;
+          } catch (e) {
+            console.warn('KMZ parse failed', e);
+            return [];
+          }
+        }
+
+        function lonLatToTileXY(lon: number, lat: number, z: number) {
+          const cols = Math.max(1, Math.pow(2, z + 1));
+          const rows = Math.max(1, Math.pow(2, z));
+          let x = Math.floor(((lon + 180) / 360) * cols);
+          let y = Math.floor(((90 - lat) / 180) * rows);
+          x = ((x % cols) + cols) % cols;
+          y = Math.min(Math.max(y, 0), rows - 1);
+          return { x, y };
+        }
+
+        const palette = ['#FFD700', '#FF6B6B', '#4ECDC4', '#95E1D3', '#F38181', '#AA96DA', '#FCBAD3', '#A8D8EA', '#FFE66D', '#C7CEEA'];
+        const TILE_COUNT = 50;
+
+        // Index configs by body for easier matching
+        const cfgByBody = new Map<string, { layer: DatasetListItem; config: ViewerConfigResponse }[]>();
+        for (const item of configs) {
+          const key = (item.config.body || item.layer.body || 'unknown').toLowerCase();
+          const arr = cfgByBody.get(key) || [];
+          arr.push(item);
+          cfgByBody.set(key, arr);
+        }
+
+        // Load feature sets (Moon + Mars). Add more bodies if needed.
+        const [moonFeatures, marsFeatures] = await Promise.all([
+          fetchGazetteerKMZ('https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/MOON_nomenclature_center_pts.kmz'),
+          fetchGazetteerKMZ('https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/MARS_nomenclature_center_pts.kmz'),
+        ]);
+
+        // Build images from features using the corresponding body layer configs
+        const generated: ImageData[] = [];
+        const used = new Set<string>();
+
+        function pushFromFeatures(bodyKey: string, feats: Array<{ name: string; lat: number; lon: number }>) {
+          const entries = cfgByBody.get(bodyKey);
+          if (!entries || !entries.length || !feats.length) return;
+
+          // Prefer a single representative layer for consistency (first one)
+          const { layer, config } = entries[0];
+
+          // choose a crisp zoom (max-1) within bounds
+          const z = Math.max(config.min_zoom, Math.min(config.max_zoom, config.max_zoom - 1));
+
+          // Prioritize named features as-is (already have names), no randoms
+          for (const f of feats) {
+            const { x, y } = lonLatToTileXY(f.lon, f.lat, z);
+            const key = `${config.id ?? layer.id}:${z}:${x}:${y}`;
+            if (used.has(key)) continue;
+            used.add(key);
+
+            const url = fillTemplate(config.tile_url_template, z, x, y);
+            generated.push({
+              image: url,
+              title: `${f.name} — ${layer.title} (z${z})`,
+              keywords: [bodyKey, layer.title, f.name],
+              color: palette[generated.length % palette.length],
+            });
+
+            if (generated.length >= TILE_COUNT) break;
+          }
+        }
+
+        // Try Moon first, then Mars (adjust order as you like)
+        pushFromFeatures('moon', moonFeatures);
+        if (generated.length < TILE_COUNT) pushFromFeatures('mars', marsFeatures);
+
+        // If still short, optionally backfill with any remaining layers/tiles at random (keeps demo robust)
+        if (generated.length < TILE_COUNT) {
+          for (let i = 0; i < 500 && generated.length < TILE_COUNT; i++) {
+            const pick = configs[Math.floor(Math.random() * configs.length)];
+            const { layer, config } = pick;
+            const z = Math.max(config.min_zoom, Math.min(config.max_zoom, config.max_zoom - 1));
+            const cols = Math.max(1, Math.pow(2, z + 1));
+            const rows = Math.max(1, Math.pow(2, z));
+            const x = Math.floor(Math.random() * cols);
+            const y = Math.floor(Math.random() * rows);
+            const key = `${config.id ?? layer.id}:${z}:${x}:${y}`;
+            if (used.has(key)) continue;
+            used.add(key);
+
+            const url = fillTemplate(config.tile_url_template, z, x, y);
+            generated.push({
+              image: url,
+              title: `${layer.title} (z${z})`,
+              keywords: [layer.body ?? layer.id, layer.title],
+              color: palette[generated.length % palette.length],
+            });
+          }
+        }
+
+        if (!cancelled && generated.length) {
+          setImageData(generated.slice(0, TILE_COUNT));
+        }
+      } catch (error) {
+        console.error('Falling back to default imagery', error);
+        if (!cancelled) {
+          setImageData(DEFAULT_IMAGE_DATA.slice(0, 50));
+        }
+      }
+    }
+
+    loadTiles();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!containerRef.current || !imageData || imageData.length === 0) return;
 
     const container = containerRef.current;
     const RADIUS = 15;
-    const COUNT = 50;
+    const tiles = imageData.slice(0, 50);
+    const COUNT = tiles.length;
 
     // Scene setup
     const scene = new THREE.Scene();
@@ -90,7 +303,7 @@ export default function PhotoSphereGallery() {
 
     // Create sprites with images
     for (let i = 0; i < COUNT; i++) {
-      const data = imageData[i % imageData.length];
+      const data = tiles[i % tiles.length];
       
       textureLoader.load(
         data.image,
@@ -382,7 +595,7 @@ export default function PhotoSphereGallery() {
         container.removeChild(renderer.domElement);
       }
     };
-  }, []);
+  }, [imageData]);
 
   return (
     <div className="relative w-full h-full">
