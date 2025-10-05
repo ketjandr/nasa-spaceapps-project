@@ -253,9 +253,20 @@ const backendBase = backendUrl ? backendUrl.replace(/\/$/, "") : "";
 interface TileViewerProps {
   externalSearchQuery?: string;
   onSearchChange?: (search: string) => void;
+  initialBody?: string;
+  initialLat?: number;
+  initialLon?: number;
+  initialZoom?: number;
 }
 
-export default function TileViewer({ externalSearchQuery, onSearchChange }: TileViewerProps) {
+export default function TileViewer({ 
+  externalSearchQuery, 
+  onSearchChange,
+  initialBody,
+  initialLat,
+  initialLon,
+  initialZoom 
+}: TileViewerProps) {
   // refs and viewer instances
   const viewerRef = useRef<HTMLDivElement | null>(null);
   const compareViewerRef = useRef<HTMLDivElement | null>(null);
@@ -267,7 +278,7 @@ export default function TileViewer({ externalSearchQuery, onSearchChange }: Tile
   const [datasets, setDatasets] = useState<DatasetListItem[]>([]);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const [layerConfig, setLayerConfig] = useState<ViewerConfigResponse | null>(null);
-  const [selectedBody, setSelectedBody] = useState<BodyKey>("earth");
+  const [selectedBody, setSelectedBody] = useState<BodyKey>(initialBody as BodyKey || "earth");
   const [selectedOverlayId, setSelectedOverlayId] = useState<string>("");
   const [overlayOpacity, setOverlayOpacity] = useState<number>(0.5);
   const [viewMode, setViewMode] = useState<"single" | "split" | "overlay">("single");
@@ -317,6 +328,13 @@ export default function TileViewer({ externalSearchQuery, onSearchChange }: Tile
     setIsClient(true);
   }, []);
 
+  // Handle initial navigation parameters from PhotoSphereGallery
+  useEffect(() => {
+    if (initialBody) {
+      setSelectedBody(initialBody as BodyKey);
+    }
+  }, [initialBody]);
+
   // Clear selected layer when body changes and auto-select first available
   useEffect(() => {
     if (datasets.length > 0) {
@@ -351,7 +369,16 @@ export default function TileViewer({ externalSearchQuery, onSearchChange }: Tile
       // Auto-select first layer for current body if none selected
       const currentBodyLayers = fallback.filter(d => d.body === selectedBody);
       if (currentBodyLayers.length > 0 && !selectedLayerId) {
+        console.log(`Auto-selecting layer for ${selectedBody}:`, currentBodyLayers[0].id);
         setSelectedLayerId(currentBodyLayers[0].id);
+      } else if (currentBodyLayers.length === 0) {
+        console.warn(`No layers available for body: ${selectedBody}`);
+        // If current body has no layers, fallback to first available body
+        const anyLayers = fallback.filter(d => d.body && d.body !== selectedBody);
+        if (anyLayers.length > 0) {
+          console.log(`Falling back to first available body: ${anyLayers[0].body}`);
+          setSelectedBody(anyLayers[0].body as BodyKey);
+        }
       }
       return;
     }
@@ -374,7 +401,7 @@ export default function TileViewer({ externalSearchQuery, onSearchChange }: Tile
     })();
 
     return () => { mounted = false; };
-  }, [backendBase, selectedLayerId]);
+  }, [backendBase, selectedLayerId, selectedBody]);
 
   // Load layer config (either from backend or from local TREK_TEMPLATES)
   useEffect(() => {
@@ -429,6 +456,7 @@ export default function TileViewer({ externalSearchQuery, onSearchChange }: Tile
             body: maybeBody,
           };
           if (!mounted) return;
+          console.log(`Setting layerConfig for ${selectedLayerId}:`, cfg);
           setLayerConfig(cfg);
           return;
         }
@@ -455,6 +483,7 @@ export default function TileViewer({ externalSearchQuery, onSearchChange }: Tile
               body,
             };
             if (!mounted) return;
+            console.log(`Setting template layerConfig for ${selectedLayerId}:`, cfg);
             setLayerConfig(cfg);
             return;
           }
@@ -466,7 +495,7 @@ export default function TileViewer({ externalSearchQuery, onSearchChange }: Tile
     })();
 
     return () => { mounted = false; };
-  }, [selectedLayerId]);
+  }, [selectedLayerId, selectedDate]);
 
   // When selectedBody changes, auto-load features (Moon Gazetteer or Mars Robbins)
   useEffect(() => {
@@ -567,6 +596,35 @@ export default function TileViewer({ externalSearchQuery, onSearchChange }: Tile
       }
     };
   }, [layerConfig]);
+
+  // Handle initial navigation to coordinates from PhotoSphereGallery
+  useEffect(() => {
+    if (initialLat !== undefined && initialLon !== undefined && viewerObjRef.current) {
+      const viewer = viewerObjRef.current;
+      
+      // Wait a bit for viewer to be fully initialized
+      setTimeout(() => {
+        try {
+          // For OpenSeadragon viewers, we need to convert lat/lon to image coordinates
+          // This is a simplified conversion - for more accuracy, we'd need the specific projection
+          const normalizedX = (initialLon + 180) / 360; // Convert -180/180 to 0/1
+          const normalizedY = (90 - initialLat) / 180; // Convert -90/90 to 0/1 (flipped for image coordinates)
+          
+          const imageRect = viewer.world.getItemAt(0).getBounds();
+          const targetX = imageRect.x + (normalizedX * imageRect.width);
+          const targetY = imageRect.y + (normalizedY * imageRect.height);
+          
+          const targetPoint = new viewer.Point(targetX, targetY);
+          const targetZoom = initialZoom ? Math.max(0, initialZoom - 5) : 2; // Convert tile zoom to viewer zoom
+          
+          viewer.viewport.panTo(targetPoint);
+          viewer.viewport.zoomTo(targetZoom);
+        } catch (error) {
+          console.warn("Could not navigate to initial coordinates:", error);
+        }
+      }, 1000);
+    }
+  }, [initialLat, initialLon, initialZoom, layerConfig]);
 
   // Split/overlay viewer functionality
   // Initialize and sync viewers
@@ -829,7 +887,7 @@ export default function TileViewer({ externalSearchQuery, onSearchChange }: Tile
       viewerObjRef.current = null;
       compareViewerObjRef.current = null;
     };
-  }, [selectedBody, selectedLayerId, selectedOverlayId, viewMode, selectedDate]);
+  }, [selectedBody, selectedLayerId, selectedOverlayId, viewMode, selectedDate, layerConfig]);
 
   // Update overlay opacity when it changes
   useEffect(() => {
@@ -1245,17 +1303,21 @@ export default function TileViewer({ externalSearchQuery, onSearchChange }: Tile
         </div>
 
         <div style={{ width: "100%", height: "640px", position: "relative" }}>
-          {isClient ? (
+          {!isClient ? (
+            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "#000", color: "white" }}>
+              Loading viewer...
+            </div>
+          ) : !layerConfig ? (
+            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "#222", color: "white" }}>
+              {selectedLayerId ? `Loading layer: ${selectedLayerId}...` : `Select a layer for ${selectedBody}`}
+            </div>
+          ) : (
             <>
               <div ref={viewerRef} style={{ width: viewMode === "split" ? "50%" : "100%", height: "100%", position: "absolute", left: 0, top: 0 }} />
               {(viewMode === "split" || viewMode === "overlay") && (
                 <div ref={compareViewerRef} style={{ width: viewMode === "split" ? "50%" : "100%", height: "100%", position: "absolute", right: 0, top: 0, pointerEvents: "auto" }} />
               )}
             </>
-          ) : (
-            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "#000", color: "white" }}>
-              Loading viewer...
-            </div>
           )}
         </div>
       </div>

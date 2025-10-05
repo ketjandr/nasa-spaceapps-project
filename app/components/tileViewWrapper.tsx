@@ -7,9 +7,19 @@ const TileViewer = dynamic(() => import('./tileViewer3'), { ssr: false });
 
 interface TileViewerWrapperProps {
   searchQuery?: string;
+  initialBody?: string;
+  initialLat?: number;
+  initialLon?: number;
+  initialZoom?: number;
 }
 
-export default function TileViewerWrapper({ searchQuery }: TileViewerWrapperProps) {
+export default function TileViewerWrapper({ 
+  searchQuery, 
+  initialBody, 
+  initialLat, 
+  initialLon, 
+  initialZoom 
+}: TileViewerWrapperProps) {
   const router = useRouter();
 
   const handleSearchChange = (newSearch: string) => {
@@ -27,6 +37,10 @@ export default function TileViewerWrapper({ searchQuery }: TileViewerWrapperProp
     <TileViewer 
       externalSearchQuery={searchQuery}
       onSearchChange={handleSearchChange}
+      initialBody={initialBody}
+      initialLat={initialLat}
+      initialLon={initialLon}
+      initialZoom={initialZoom}
     />
   );
 }

@@ -10,6 +10,12 @@ function ExplorerContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [navigationParams, setNavigationParams] = useState<{
+    body?: string;
+    lat?: number;
+    lon?: number;
+    zoom?: number;
+  }>({});
 
   useEffect(() => {
     // Get the search query from URL params
@@ -17,6 +23,19 @@ function ExplorerContent() {
     if (query) {
       setSearchQuery(query);
     }
+
+    // Get navigation parameters from PhotoSphereGallery
+    const body = searchParams.get('body');
+    const lat = searchParams.get('lat');
+    const lon = searchParams.get('lon');
+    const zoom = searchParams.get('zoom');
+
+    setNavigationParams({
+      body: body || undefined,
+      lat: lat ? parseFloat(lat) : undefined,
+      lon: lon ? parseFloat(lon) : undefined,
+      zoom: zoom ? parseInt(zoom) : undefined,
+    });
   }, [searchParams]);
 
   const handleSearch = (query: string) => {
@@ -84,7 +103,13 @@ function ExplorerContent() {
           
           {/* Tile viewer */}
           <div className="bg-gray-900/50 rounded-xl p-4 sm:p-6 backdrop-blur-sm border border-white/10 shadow-2xl">
-            <TileViewerWrapper searchQuery={searchQuery} />
+            <TileViewerWrapper 
+              searchQuery={searchQuery} 
+              initialBody={navigationParams.body}
+              initialLat={navigationParams.lat}
+              initialLon={navigationParams.lon}
+              initialZoom={navigationParams.zoom}
+            />
           </div>
 
           {/* Help section */}

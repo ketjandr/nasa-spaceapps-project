@@ -1,7 +1,11 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import * as THREE from 'three';
+import JSZip from 'jszip';
+// @ts-ignore - togeojson doesn't have types
+import toGeoJSON from 'togeojson';
 
 type DatasetListItem = {
   id: string;
@@ -26,6 +30,10 @@ type ImageData = {
   title: string;
   keywords: string[];
   color: string;
+  planet?: string;
+  lat?: number;
+  lon?: number;
+  zoom?: number;
 };
 
 const DEFAULT_IMAGE_DATA: ImageData[] = [
@@ -36,6 +44,7 @@ const DEFAULT_IMAGE_DATA: ImageData[] = [
 ];
 
 export default function PhotoSphereGallery() {
+  const router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
   const [navHintText, setNavHintText] = useState('Made with ❤️ by Slack Overflow');
   const [isNavHintVisible, setIsNavHintVisible] = useState(false);
@@ -153,17 +162,36 @@ export default function PhotoSphereGallery() {
           cfgByBody.set(key, arr);
         }
 
-        // Load feature sets (Moon + Mars). Add more bodies if needed.
-        const [moonFeatures, marsFeatures] = await Promise.all([
-          fetchGazetteerKMZ('https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/MOON_nomenclature_center_pts.kmz'),
-          fetchGazetteerKMZ('https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/MARS_nomenclature_center_pts.kmz'),
-        ]);
+        // Load feature sets from all available planets
+        const planetKmzUrls = {
+          moon: 'https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/MOON_nomenclature_center_pts.kmz',
+          mars: 'https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/MARS_nomenclature_center_pts.kmz',
+          mercury: 'https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/MERCURY_nomenclature_center_pts.kmz',
+          ceres: 'https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/CERES_nomenclature_center_pts.kmz',
+          vesta: 'https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/VESTA_nomenclature_center_pts.kmz'
+        };
+
+        const planetFeatures: Record<string, Array<{ name: string; lat: number; lon: number }>> = {};
+        
+        // Load features for all planets in parallel
+        await Promise.all(
+          Object.entries(planetKmzUrls).map(async ([planet, url]) => {
+            try {
+              const features = await fetchGazetteerKMZ(url);
+              planetFeatures[planet] = features;
+              console.log(`Loaded ${features.length} features for ${planet}`);
+            } catch (error) {
+              console.warn(`Failed to load features for ${planet}:`, error);
+              planetFeatures[planet] = [];
+            }
+          })
+        );
 
         // Build images from features using the corresponding body layer configs
         const generated: ImageData[] = [];
         const used = new Set<string>();
 
-        function pushFromFeatures(bodyKey: string, feats: Array<{ name: string; lat: number; lon: number }>) {
+        function pushFromFeatures(bodyKey: string, feats: Array<{ name: string; lat: number; lon: number }>, maxFromThisPlanet: number = 15) {
           const entries = cfgByBody.get(bodyKey);
           if (!entries || !entries.length || !feats.length) return;
 
@@ -173,8 +201,14 @@ export default function PhotoSphereGallery() {
           // choose a crisp zoom (max-1) within bounds
           const z = Math.max(config.min_zoom, Math.min(config.max_zoom, config.max_zoom - 1));
 
+          // Shuffle features to get variety and limit per planet for better distribution
+          const shuffledFeats = [...feats].sort(() => Math.random() - 0.5);
+          let addedFromThisPlanet = 0;
+
           // Prioritize named features as-is (already have names), no randoms
-          for (const f of feats) {
+          for (const f of shuffledFeats) {
+            if (addedFromThisPlanet >= maxFromThisPlanet || generated.length >= TILE_COUNT) break;
+            
             const { x, y } = lonLatToTileXY(f.lon, f.lat, z);
             const key = `${config.id ?? layer.id}:${z}:${x}:${y}`;
             if (used.has(key)) continue;
@@ -186,15 +220,35 @@ export default function PhotoSphereGallery() {
               title: `${f.name} — ${layer.title} (z${z})`,
               keywords: [bodyKey, layer.title, f.name],
               color: palette[generated.length % palette.length],
+              planet: bodyKey,
+              lat: f.lat,
+              lon: f.lon,
+              zoom: z,
             });
 
-            if (generated.length >= TILE_COUNT) break;
+            addedFromThisPlanet++;
           }
         }
 
-        // Try Moon first, then Mars (adjust order as you like)
-        pushFromFeatures('moon', moonFeatures);
-        if (generated.length < TILE_COUNT) pushFromFeatures('mars', marsFeatures);
+        // Process features from all planets with balanced distribution
+        const planetLimits = {
+          'moon': 12,
+          'mars': 12, 
+          'mercury': 10,
+          'ceres': 8,
+          'vesta': 8
+        };
+        
+        const planetsToProcess = ['moon', 'mars', 'mercury', 'ceres', 'vesta'];
+        for (const planet of planetsToProcess) {
+          if (generated.length >= TILE_COUNT) break;
+          const features = planetFeatures[planet] || [];
+          const maxForThisPlanet = planetLimits[planet as keyof typeof planetLimits] || 10;
+          if (features.length > 0) {
+            pushFromFeatures(planet, features, maxForThisPlanet);
+            console.log(`Added ${Math.min(features.length, maxForThisPlanet)} images from ${planet} (${features.length} features available)`);
+          }
+        }
 
         // If still short, optionally backfill with any remaining layers/tiles at random (keeps demo robust)
         if (generated.length < TILE_COUNT) {
@@ -322,7 +376,11 @@ export default function PhotoSphereGallery() {
             title: data.title,
             keywords: data.keywords,
             color: data.color,
-            originalScale: sizeVariation
+            originalScale: sizeVariation,
+            planet: data.planet,
+            lat: data.lat,
+            lon: data.lon,
+            zoom: data.zoom
           };
           
           group.add(sprite);
@@ -365,7 +423,11 @@ export default function PhotoSphereGallery() {
             title: data.title,
             keywords: data.keywords,
             color: data.color,
-            originalScale: sizeVariation
+            originalScale: sizeVariation,
+            planet: data.planet,
+            lat: data.lat,
+            lon: data.lon,
+            zoom: data.zoom
           };
           
           group.add(sprite);
@@ -494,7 +556,21 @@ export default function PhotoSphereGallery() {
       if (intersects.length > 0) {
         const picked = intersects[0].object as THREE.Sprite;
         if (picked.userData && picked.userData.title) {
-          alert(`Viewing: ${picked.userData.title}`);
+          const { planet, lat, lon, zoom } = picked.userData;
+          
+          if (planet && lat !== undefined && lon !== undefined) {
+            // Navigate to explorer page with selected planet and coordinates
+            const params = new URLSearchParams({
+              body: planet,
+              lat: lat.toString(),
+              lon: lon.toString(),
+              zoom: zoom ? zoom.toString() : '10'
+            });
+            router.push(`/explorer?${params.toString()}`);
+          } else {
+            // Fallback for images without location data
+            alert(`Viewing: ${picked.userData.title}`);
+          }
         }
       }
     };
