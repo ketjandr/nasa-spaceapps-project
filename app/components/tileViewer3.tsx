@@ -272,13 +272,18 @@ export default function TileViewer({
   const compareViewerRef = useRef<HTMLDivElement | null>(null);
   const viewerObjRef = useRef<any | null>(null);
   const compareViewerObjRef = useRef<any | null>(null);
+  // Track whether external body has been synced at least once
+  // If we have an external body prop at mount, consider it already synced
+  const hasExternalBodySynced = useRef<boolean>(externalSelectedBody !== undefined);
 
   // state
   const [isClient, setIsClient] = useState(false);
   const [datasets, setDatasets] = useState<DatasetListItem[]>([]);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const [layerConfig, setLayerConfig] = useState<ViewerConfigResponse | null>(null);
-  const [selectedBody, setSelectedBody] = useState<BodyKey>(initialBody as BodyKey || "earth");
+  const [selectedBody, setSelectedBody] = useState<BodyKey>(
+    externalSelectedBody ? (externalSelectedBody as BodyKey) : "moon"
+  ); // Initialize from prop or default to moon
   const [selectedOverlayId, setSelectedOverlayId] = useState<string>("");
   const [overlayOpacity, setOverlayOpacity] = useState<number>(0.5);
   const [viewMode, setViewMode] = useState<"single" | "split" | "overlay">("single");
@@ -288,9 +293,13 @@ export default function TileViewer({
   const [features, setFeatures] = useState<PlanetFeature[]>([]);
   const [searchText, setSearchText] = useState<string>(externalSearchQuery ?? "");
 
-  // sync external search
+  console.log('[TileViewer3 RENDER] externalSelectedBody:', externalSelectedBody, 'selectedBody:', selectedBody, 'selectedLayerId:', selectedLayerId, 'hasExternalBodySynced:', hasExternalBodySynced.current);
+
+  // sync external search - including empty string to clear search
   useEffect(() => {
-    if (externalSearchQuery) setSearchText(externalSearchQuery);
+    if (externalSearchQuery !== undefined) {
+      setSearchText(externalSearchQuery);
+    }
   }, [externalSearchQuery]);
 
   // Auto-search for planetary features when search text changes
@@ -394,7 +403,8 @@ export default function TileViewer({
         }
         const data = await resp.json();
         setDatasets(data);
-        if (data.length > 0 && !selectedLayerId) setSelectedLayerId(data[0].id);
+        // Don't auto-select first dataset - let the selectedBody useEffect handle it
+        // if (data.length > 0 && !selectedLayerId) setSelectedLayerId(data[0].id);
       } catch (err) {
         console.error("Error loading datasets:", err);
       }
@@ -405,8 +415,10 @@ export default function TileViewer({
 
   // Load layer config (either from backend or from local TREK_TEMPLATES)
   useEffect(() => {
+    console.log('[TileViewer3] Layer config loading - selectedLayerId:', selectedLayerId);
     let mounted = true;
     if (!selectedLayerId) {
+      console.log('[TileViewer3] No selectedLayerId - clearing layer config');
       setLayerConfig(null);
       return;
     }
@@ -424,6 +436,9 @@ export default function TileViewer({
           }
           const cfg = await resp.json();
           setLayerConfig(cfg);
+          // Don't override selectedBody from config - it's controlled externally
+          // const body = (cfg.body || "unknown").toLowerCase() as BodyKey;
+          // setSelectedBody(body);
           return;
         } catch (err) {
           console.error("Error loading layer config from backend:", err);
@@ -437,6 +452,7 @@ export default function TileViewer({
         const bodyKey = (maybeBody as BodyKey) || "unknown";
         foundTemplate = TREK_TEMPLATES[bodyKey]?.find((t) => t.id === maybeId);
         if (foundTemplate) {
+          console.log('[TileViewer3] Found TREK template:', selectedLayerId, 'for body:', bodyKey);
           // build a minimal layerConfig from template
           let tileTemplate = foundTemplate.template;
           
@@ -456,8 +472,10 @@ export default function TileViewer({
             body: maybeBody,
           };
           if (!mounted) return;
-          console.log(`Setting layerConfig for ${selectedLayerId}:`, cfg);
+          console.log('[TileViewer3] Setting layer config:', cfg.id, cfg.title);
           setLayerConfig(cfg);
+          // Don't override selectedBody from config - it's controlled externally
+          // setSelectedBody(maybeBody as BodyKey);
           return;
         }
       } else {
@@ -485,6 +503,8 @@ export default function TileViewer({
             if (!mounted) return;
             console.log(`Setting template layerConfig for ${selectedLayerId}:`, cfg);
             setLayerConfig(cfg);
+            // Don't override selectedBody from config - it's controlled externally
+            // setSelectedBody(body);
             return;
           }
         }
@@ -499,25 +519,36 @@ export default function TileViewer({
 
   // When selectedBody changes, auto-load features (Moon Gazetteer or Mars Robbins)
   useEffect(() => {
+    console.log('[TileViewer3] Feature loading - selectedBody:', selectedBody);
+    // Clear features immediately to avoid showing wrong body's features
+    setFeatures([]);
+    
     if (selectedBody === "moon") {
+      console.log('[TileViewer3] Loading Moon features...');
       loadMoonGazetteer();
     } else if (selectedBody === "mars") {
+      console.log('[TileViewer3] Loading Mars features...');
       queryMarsCraterDB();
     } else {
-      setFeatures([]);
+      console.log('[TileViewer3] No features for body:', selectedBody);
+      // Features already cleared above
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBody]);
 
   // Keep openseadragon import in effect (client-only) - ONLY for backend-sourced configs
   useEffect(() => {
+    console.log('[TileViewer3] OpenSeadragon viewer effect - layerConfig:', layerConfig?.id, layerConfig?.title);
     let viewer: OpenSeadragon.Viewer | null = null;
     let osd: typeof import("openseadragon") | null = null;
     let mounted = true;
 
     (async () => {
-      // Only run this viewer for backend configs, not template-based configs
-      if (!layerConfig || selectedLayerId?.includes(":")) return;
+      if (!layerConfig) {
+        console.log('[TileViewer3] No layerConfig - skipping viewer creation');
+        return;
+      }
+      console.log('[TileViewer3] Creating OpenSeadragon viewer for:', layerConfig.id);
       const OSDModule = await import("openseadragon");
       osd = (OSDModule.default ?? OSDModule) as typeof import("openseadragon");
       if (!viewerRef.current || !mounted) return;
@@ -580,10 +611,12 @@ export default function TileViewer({
         maxImageCacheCount: 200
       });
 
+      console.log('[TileViewer3] OpenSeadragon viewer created successfully with tile source');
       viewerObjRef.current = viewer;
     })();
 
     return () => {
+      console.log('[TileViewer3] OpenSeadragon viewer cleanup - destroying viewer');
       mounted = false;
       if (viewer) {
         // Clear all overlays before destroying
@@ -637,10 +670,12 @@ export default function TileViewer({
     const cleanup = () => {
       try {
         if (mainViewer) { mainViewer.destroy(); mainViewer = null; }
-      } catch (e) { } // ignore
+      } catch (e) { // ignore
+      }
       try {
         if (compareViewer) { compareViewer.destroy(); compareViewer = null; }
-      } catch (e) { } // ignore
+      } catch (e) { // ignore
+      }
       viewerObjRef.current = null;
       compareViewerObjRef.current = null;
     };
@@ -1206,9 +1241,11 @@ export default function TileViewer({
             Dataset:
             <select value={selectedLayerId ?? ""} onChange={(e) => setSelectedLayerId(e.target.value)}>
               <option value="">(none)</option>
-              {datasets.filter(d => d.body === selectedBody).map((d) => (
-                <option key={d.id} value={d.id}>{d.title}</option>
-              ))}
+              {datasets
+                .filter(d => d.body === selectedBody || d.id.startsWith(`${selectedBody}:`))
+                .map((d) => (
+                  <option key={d.id} value={d.id}>{d.title}</option>
+                ))}
             </select>
           </label>
 
