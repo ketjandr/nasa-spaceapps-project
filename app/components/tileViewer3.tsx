@@ -4,8 +4,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import JSZip from "jszip";
 import { xml2json } from "xml-js"; // optional helper if you prefer parsing XML to JSON (not required)
-import toGeoJSON from "togeojson"; // note: togeojson exports DOM parsers; we'll use via DOMParser
-// (If togeojson import issues, you can also parse KML manually or use another KML->GeoJSON lib.)
+import * as toGeoJSON from "@mapbox/togeojson"; // updated package for KML to GeoJSON conversion
 
 type BodyKey = "moon" | "mars" | "mercury" | "ceres";
 

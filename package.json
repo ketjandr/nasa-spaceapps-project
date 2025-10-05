@@ -9,12 +9,14 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@mapbox/togeojson": "^0.16.2",
     "jszip": "^3.10.1",
     "next": "15.5.4",
     "openseadragon": "^5.0.1",
     "react": "19.1.0",
     "react-dom": "19.1.0",
-    "togeojson": "^0.16.0"
+    "togeojson": "^0.16.0",
+    "xml-js": "^1.6.11"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",

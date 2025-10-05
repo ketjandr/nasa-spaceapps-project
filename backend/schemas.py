@@ -76,6 +76,26 @@ class ViewerConfigResponse(BaseModel):
     tile_source: ViewerTileSource
 
 
+class DatasetListItem(BaseModel):
+    """Dataset item for listing available layers"""
+    id: str
+    title: str
+    body: str
+
+
+class ViewerConfig(BaseModel):
+    """Viewer configuration for OpenSeadragon"""
+    id: str
+    title: str
+    tile_url_template: str
+    min_zoom: int = 0
+    max_zoom: int = 18
+    tile_size: int = 256
+    projection: str = "EPSG:4326"
+    attribution: str = "NASA"
+    body: str
+
+
 class FeatureCategory:
     """Official IAU feature type categories"""
     CRATER = "Crater"
