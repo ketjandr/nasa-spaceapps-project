@@ -1,14 +1,26 @@
 "use client";
 
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import GlassSearchBar from './components/search_bar';
 
 export default function Home() {
   const router = useRouter();
+  const [selectedFilter, setSelectedFilter] = useState<string | null>(null);
 
   const handleGlobalSearch = (query: string) => {
-    // Navigate to the explorer page with the search query
-    router.push(`/explorer?search=${encodeURIComponent(query)}`);
+    // Navigate to the explorer page with the search query and filter
+    const params = new URLSearchParams();
+    // Always include search param (even if empty) to trigger search
+    params.append('search', query.trim());
+    if (selectedFilter) {
+      params.append('filter', selectedFilter);
+    }
+    router.push(`/explorer?${params.toString()}`);
+  };
+
+  const handleFilterChange = (filter: string | null) => {
+    setSelectedFilter(filter);
   };
 
   const handleSurpriseClick = () => {
@@ -43,6 +55,8 @@ export default function Home() {
           <GlassSearchBar 
             onSearch={handleGlobalSearch}
             placeholder="Search for craters, mountains, coordinates (e.g., 'Sinus Lunicus', 'De Vico')..."
+            selectedFilter={selectedFilter}
+            onFilterChange={handleFilterChange}
           />
           
           {/* Search suggestions */}

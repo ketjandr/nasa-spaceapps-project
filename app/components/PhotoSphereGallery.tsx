@@ -198,7 +198,7 @@ export default function PhotoSphereGallery() {
     // Reset focus function
     function resetFocus() {
       isFocused = false;
-      setNavHintText('Made with ❤️ by Slack Overflow');
+      setNavHintText('x');
 
       sprites.forEach(s => {
         s.material.opacity = 1;

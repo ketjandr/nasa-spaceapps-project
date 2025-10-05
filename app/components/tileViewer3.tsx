@@ -32,18 +32,6 @@ type ViewerConfigResponse = {
   body?: string | null;
 };
 
-type ViewerConfigResponse = {
-  id: string;
-  title: string;
-  tile_url_template: string;
-  min_zoom: number;
-  max_zoom: number;
-  tile_size: number;
-  projection?: string | null;
-  attribution?: string | null;
-  body?: string | null;
-};
-
 type PlanetFeature = {
   name: string;
   lat: number;
@@ -105,20 +93,26 @@ const backendBase = backendUrl ? backendUrl.replace(/\/$/, "") : "";
 // --- component -------------------------------------------------------
 interface TileViewerProps {
   externalSearchQuery?: string;
+  externalSelectedBody?: string | null;
 }
 
-export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
+export default function TileViewer({ externalSearchQuery, externalSelectedBody }: TileViewerProps) {
   // refs and viewer instances
   const viewerRef = useRef<HTMLDivElement | null>(null);
   const compareViewerRef = useRef<HTMLDivElement | null>(null);
   const viewerObjRef = useRef<any | null>(null);
   const compareViewerObjRef = useRef<any | null>(null);
+  // Track whether external body has been synced at least once
+  // If we have an external body prop at mount, consider it already synced
+  const hasExternalBodySynced = useRef<boolean>(externalSelectedBody !== undefined);
 
   // state
   const [datasets, setDatasets] = useState<DatasetListItem[]>([]);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const [layerConfig, setLayerConfig] = useState<ViewerConfigResponse | null>(null);
-  const [selectedBody, setSelectedBody] = useState<BodyKey>("unknown");
+  const [selectedBody, setSelectedBody] = useState<BodyKey>(
+    externalSelectedBody ? (externalSelectedBody as BodyKey) : "moon"
+  ); // Initialize from prop or default to moon
   const [selectedOverlayId, setSelectedOverlayId] = useState<string>("");
   const [overlayOpacity, setOverlayOpacity] = useState<number>(0.5);
   const [viewMode, setViewMode] = useState<"single" | "split" | "overlay">("single");
@@ -126,10 +120,48 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
   const [features, setFeatures] = useState<PlanetFeature[]>([]);
   const [searchText, setSearchText] = useState<string>(externalSearchQuery ?? "");
 
-  // sync external search
+  console.log('[TileViewer3 RENDER] externalSelectedBody:', externalSelectedBody, 'selectedBody:', selectedBody, 'selectedLayerId:', selectedLayerId, 'hasExternalBodySynced:', hasExternalBodySynced.current);
+
+  // sync external search - including empty string to clear search
   useEffect(() => {
-    if (externalSearchQuery) setSearchText(externalSearchQuery);
+    if (externalSearchQuery !== undefined) {
+      setSearchText(externalSearchQuery);
+    }
   }, [externalSearchQuery]);
+
+  // sync external body selection - default to moon if no filter or null
+  useEffect(() => {
+    console.log('[TileViewer3] External body sync - externalSelectedBody:', externalSelectedBody);
+    const newBody = externalSelectedBody ? (externalSelectedBody as BodyKey) : "moon";
+    console.log('[TileViewer3] Setting selectedBody to:', newBody);
+    // Only update if the value actually changed to prevent unnecessary re-renders
+    setSelectedBody(prev => prev === newBody ? prev : newBody);
+    // Mark that we've processed the external prop at least once
+    hasExternalBodySynced.current = true;
+  }, [externalSelectedBody]);
+
+  // When selectedBody changes, update to first dataset of that body
+  useEffect(() => {
+    console.log('[TileViewer3] Dataset auto-switch - selectedBody:', selectedBody, 'datasets.length:', datasets.length, 'hasExternalBodySynced:', hasExternalBodySynced.current);
+    // Skip dataset selection until external body has been synced at least once
+    // This prevents auto-selecting moon dataset before we know the intended body
+    if (!hasExternalBodySynced.current) {
+      console.log('[TileViewer3] Skipping dataset selection - external body not synced yet');
+      return;
+    }
+    
+    if (datasets.length > 0) {
+      // Find the first dataset matching the selected body
+      const bodyDataset = datasets.find(d => d.body === selectedBody || d.id.startsWith(`${selectedBody}:`));
+      console.log('[TileViewer3] Found dataset for', selectedBody, ':', bodyDataset?.id);
+      if (bodyDataset) {
+        setSelectedLayerId(bodyDataset.id);
+      } else {
+        // No dataset found for this body - clear the selection to show nothing
+        setSelectedLayerId(null);
+      }
+    }
+  }, [selectedBody, datasets]);
 
   // load datasets list from backend if configured (optional)
   useEffect(() => {
@@ -142,7 +174,8 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
         });
       });
       setDatasets(fallback);
-      if (fallback.length > 0 && !selectedLayerId) setSelectedLayerId(fallback[0].id);
+      // Don't auto-select first dataset - let the selectedBody useEffect handle it
+      // if (fallback.length > 0 && !selectedLayerId) setSelectedLayerId(fallback[0].id);
       return;
     }
 
@@ -157,7 +190,8 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
         }
         const data = await resp.json();
         setDatasets(data);
-        if (data.length > 0 && !selectedLayerId) setSelectedLayerId(data[0].id);
+        // Don't auto-select first dataset - let the selectedBody useEffect handle it
+        // if (data.length > 0 && !selectedLayerId) setSelectedLayerId(data[0].id);
       } catch (err) {
         console.error("Error loading datasets:", err);
       }
@@ -168,8 +202,10 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
 
   // Load layer config (either from backend or from local TREK_TEMPLATES)
   useEffect(() => {
+    console.log('[TileViewer3] Layer config loading - selectedLayerId:', selectedLayerId);
     let mounted = true;
     if (!selectedLayerId) {
+      console.log('[TileViewer3] No selectedLayerId - clearing layer config');
       setLayerConfig(null);
       return;
     }
@@ -187,8 +223,9 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
           }
           const cfg = await resp.json();
           setLayerConfig(cfg);
-          const body = (cfg.body || "unknown").toLowerCase() as BodyKey;
-          setSelectedBody(body);
+          // Don't override selectedBody from config - it's controlled externally
+          // const body = (cfg.body || "unknown").toLowerCase() as BodyKey;
+          // setSelectedBody(body);
           return;
         } catch (err) {
           console.error("Error loading layer config from backend:", err);
@@ -202,6 +239,7 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
         const bodyKey = (maybeBody as BodyKey) || "unknown";
         foundTemplate = TREK_TEMPLATES[bodyKey]?.find((t) => t.id === maybeId);
         if (foundTemplate) {
+          console.log('[TileViewer3] Found TREK template:', selectedLayerId, 'for body:', bodyKey);
           // build a minimal layerConfig from template
           const cfg: ViewerConfigResponse = {
             id: selectedLayerId,
@@ -213,8 +251,10 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
             body: maybeBody,
           };
           if (!mounted) return;
+          console.log('[TileViewer3] Setting layer config:', cfg.id, cfg.title);
           setLayerConfig(cfg);
-          setSelectedBody(maybeBody as BodyKey);
+          // Don't override selectedBody from config - it's controlled externally
+          // setSelectedBody(maybeBody as BodyKey);
           return;
         }
       } else {
@@ -234,7 +274,8 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
             };
             if (!mounted) return;
             setLayerConfig(cfg);
-            setSelectedBody(body);
+            // Don't override selectedBody from config - it's controlled externally
+            // setSelectedBody(body);
             return;
           }
         }
@@ -249,24 +290,36 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
 
   // When selectedBody changes, auto-load features (Moon Gazetteer or Mars Robbins)
   useEffect(() => {
+    console.log('[TileViewer3] Feature loading - selectedBody:', selectedBody);
+    // Clear features immediately to avoid showing wrong body's features
+    setFeatures([]);
+    
     if (selectedBody === "moon") {
+      console.log('[TileViewer3] Loading Moon features...');
       loadMoonGazetteer();
     } else if (selectedBody === "mars") {
-      queryMarsCraterDB("");
+      console.log('[TileViewer3] Loading Mars features...');
+      queryMarsCraterDB();
     } else {
-      setFeatures([]);
+      console.log('[TileViewer3] No features for body:', selectedBody);
+      // Features already cleared above
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBody]);
 
   // Keep openseadragon import in effect (client-only)
   useEffect(() => {
+    console.log('[TileViewer3] OpenSeadragon viewer effect - layerConfig:', layerConfig?.id, layerConfig?.title);
     let viewer: OpenSeadragon.Viewer | null = null;
     let osd: typeof import("openseadragon") | null = null;
     let mounted = true;
 
     (async () => {
-      if (!layerConfig) return;
+      if (!layerConfig) {
+        console.log('[TileViewer3] No layerConfig - skipping viewer creation');
+        return;
+      }
+      console.log('[TileViewer3] Creating OpenSeadragon viewer for:', layerConfig.id);
       const OSDModule = await import("openseadragon");
       osd = (OSDModule.default ?? OSDModule) as typeof import("openseadragon");
       if (!viewerRef.current || !mounted) return;
@@ -328,10 +381,12 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
         maxImageCacheCount: 200
       });
 
-      setViewerObj(viewer);
+      console.log('[TileViewer3] OpenSeadragon viewer created successfully with tile source');
+      viewerObjRef.current = viewer;
     })();
 
     return () => {
+      console.log('[TileViewer3] OpenSeadragon viewer cleanup - destroying viewer');
       mounted = false;
       if (viewer) viewer.destroy();
     };
@@ -350,10 +405,12 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
     const cleanup = () => {
       try {
         if (mainViewer) { mainViewer.destroy(); mainViewer = null; }
-      } catch (e) { /* ignore */ }
+      } catch (e) { // ignore
+      }
       try {
         if (compareViewer) { compareViewer.destroy(); compareViewer = null; }
-      } catch (e) { /* ignore */ }
+      } catch (e) { // ignore
+      }
       viewerObjRef.current = null;
       compareViewerObjRef.current = null;
     };
@@ -757,9 +814,11 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
             Dataset:
             <select value={selectedLayerId ?? ""} onChange={(e) => setSelectedLayerId(e.target.value)}>
               <option value="">(none)</option>
-              {datasets.map((d) => (
-                <option key={d.id} value={d.id}>{d.title}</option>
-              ))}
+              {datasets
+                .filter(d => d.body === selectedBody || d.id.startsWith(`${selectedBody}:`))
+                .map((d) => (
+                  <option key={d.id} value={d.id}>{d.title}</option>
+                ))}
             </select>
           </label>
 
@@ -801,7 +860,7 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
           )}
           {selectedBody === "mars" && (
             <button
-              onClick={() => queryMarsCraterDB("")}
+              onClick={() => queryMarsCraterDB()}
             >
               Reload Mars Craters
             </button>
