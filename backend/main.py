@@ -21,6 +21,9 @@ from .schemas import (
     ViewerTileSource,
 )
 
+# Import new AI search router
+from .search import router as search_router
+
 app = FastAPI(
     title="NASA GIBS Proxy",
     version="0.1.0",
@@ -33,6 +36,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include AI search endpoints
+app.include_router(search_router)
 
 
 @app.get("/health")

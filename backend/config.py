@@ -13,6 +13,18 @@ class Settings(BaseSettings):
     )
     default_projection: str = Field(default="epsg3857")
     cache_ttl_seconds: int = Field(default=600)
+    
+    # OpenAI Settings
+    openai_api_key: str = Field(
+        default="",
+        description="OpenAI API key for embeddings and NLP"
+    )
+    
+    # Database Settings
+    database_url: str = Field(
+        default="sqlite:///./stellarcanvas.db",
+        description="Database connection URL"
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="BACKEND_",
