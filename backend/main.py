@@ -1,15 +1,22 @@
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException, Path, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .config import DatasetConfig, load_datasets
 from .schemas import DatasetListItem, ViewerConfig
+
+# Import DeepSeek-powered fast search router
+try:
+    from .search_deepseek import router as search_router
+    print("Using DeepSeek API-powered fast search")
+except ImportError:
+    from .search import router as search_router
+    print("Using legacy search (DeepSeek not available)")
 
 app = FastAPI(title="StellarCanvas Tiles", version="0.2.0")
 
@@ -19,6 +26,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include search router with AI search endpoints
+app.include_router(search_router)
 
 _DATASETS: Dict[str, DatasetConfig] = load_datasets()
 
