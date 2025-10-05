@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, FormEvent, ChangeEvent } from "react";
-import { Search, ArrowUp } from "lucide-react";
+import { Search, ArrowUp, X } from "lucide-react";
 
 interface GlassSearchBarProps {
   onSearch?: (query: string) => void;
@@ -14,6 +14,7 @@ export default function GlassSearchBar({
   onSearch, 
   placeholder = "Search planetary features, locations, coordinates...",
   className = "",
+  
   value: externalValue
 }: GlassSearchBarProps) {
   const [query, setQuery] = useState<string>("");
@@ -39,7 +40,7 @@ export default function GlassSearchBar({
   return (
     <form
       onSubmit={handleSubmit}
-      className={`flex items-center w-full max-w-3xl bg-white/10 backdrop-blur-md rounded-full px-4 py-3 shadow-lg border border-white/20 hover:border-white/30 transition-all ${className}`}
+      className={`flex items-center w-full max-w-3xl bg-black/40 backdrop-blur-xl rounded-full px-4 py-3 shadow-lg border border-white/30 hover:border-white/40 transition-all ${className}`}
     >
       {/* Magnifying Glass Icon */}
       <Search className="text-white/70 w-5 h-5 mr-3 flex-shrink-0" />
@@ -52,6 +53,18 @@ export default function GlassSearchBar({
         onChange={handleChange}
         className="flex-grow bg-transparent outline-none text-white placeholder-white/50 text-base"
       />
+
+      {/* Clear Button */}
+      {query.trim() && (
+        <button
+          type="button"
+          onClick={() => setQuery("")}
+          className="flex items-center justify-center text-white/50 hover:text-white/80 rounded-full w-7 h-7 mr-1 hover:bg-white/10 transition flex-shrink-0"
+          title="Clear search"
+        >
+          <X size={16} />
+        </button>
+      )}
 
       {/* Enter Button */}
       <button
