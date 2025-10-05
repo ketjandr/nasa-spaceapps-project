@@ -63,7 +63,9 @@ export default function PhotoSphereGallery() {
     const sprites: THREE.Sprite[] = [];
     let isDragging = false;
     let prevX = 0;
+    let prevY = 0;
     let vel = 0;
+    let velY = 0;
     let isFocused = false;
 
     // Scattered sphere distribution
@@ -225,6 +227,7 @@ export default function PhotoSphereGallery() {
       if (isFocused) return;
       isDragging = true;
       prevX = e.clientX;
+      prevY = e.clientY;
     };
 
     const handlePointerUp = () => {
@@ -234,9 +237,31 @@ export default function PhotoSphereGallery() {
     const handlePointerMove = (e: PointerEvent) => {
       if (!isDragging) return;
       const dx = e.clientX - prevX;
+      const dy = e.clientY - prevY;
       prevX = e.clientX;
+      prevY = e.clientY;
+      
+      // Rotate horizontally
       group.rotation.y += dx * 0.005;
       vel = dx * 0.002;
+      
+      // Rotate vertically with constraints to prevent flipping
+      group.rotation.x += dy * 0.005;
+      group.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, group.rotation.x));
+      velY = dy * 0.002;
+    };
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      
+      // Zoom in/out with mouse wheel
+      const zoomSpeed = 0.1;
+      const delta = e.deltaY > 0 ? zoomSpeed : -zoomSpeed;
+      
+      camera.position.z += delta;
+      
+      // Constrain zoom limits
+      camera.position.z = Math.max(10, Math.min(50, camera.position.z));
     };
 
     const handleClick = (ev: MouseEvent) => {
@@ -284,6 +309,7 @@ export default function PhotoSphereGallery() {
     window.addEventListener('pointermove', handlePointerMove);
     renderer.domElement.addEventListener('click', handleClick);
     renderer.domElement.addEventListener('dblclick', handleDoubleClick);
+    renderer.domElement.addEventListener('wheel', handleWheel, { passive: false });
 
     // Animation loop
     function animate() {
@@ -295,6 +321,11 @@ export default function PhotoSphereGallery() {
       if (!isDragging && !isFocused) {
         group.rotation.y += 0.002 + (vel * 0.01);
         vel *= 0.95;
+        
+        // Apply vertical velocity decay
+        group.rotation.x += velY * 0.01;
+        group.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, group.rotation.x));
+        velY *= 0.95;
       }
       
       renderer.render(scene, camera);
@@ -341,6 +372,7 @@ export default function PhotoSphereGallery() {
       window.removeEventListener('pointermove', handlePointerMove);
       renderer.domElement.removeEventListener('click', handleClick);
       renderer.domElement.removeEventListener('dblclick', handleDoubleClick);
+      renderer.domElement.removeEventListener('wheel', handleWheel);
       
       if (sceneRef.current?.animationId) {
         cancelAnimationFrame(sceneRef.current.animationId);
