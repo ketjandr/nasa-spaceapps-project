@@ -1,15 +1,35 @@
 "use client";
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import GlassSearchBar from './components/search_bar';
+import { useSearchParams, useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
+import Image from "next/image";
+import { useEffect, useRef, useState } from "react";
+import GlassSearchBar from "./components/search_bar";
 
-export default function Home() {
+// Dynamically import PhotoSphereGallery to avoid SSR issues with Three.js
+const PhotoSphereGallery = dynamic(
+  () => import("./components/PhotoSphereGallery"),
+  { ssr: false }
+);
+
+export default function SurprisePage() {
   const router = useRouter();
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const searchParams = useSearchParams();
+  const [searchQuery, setSearchQuery] = useState<string>("");
   const [selectedFilter, setSelectedFilter] = useState<string | null>(null);
 
-  const handleGlobalSearch = (query: string) => {
-    // Navigate to the explorer page with the search query and filter
+  useEffect(() => {
+    // Get the search query from URL params
+    const query = searchParams.get("search");
+    if (query) {
+      setSearchQuery(query);
+    }
+  }, [searchParams]);
+
+  const handleSearch = (query: string) => {
+    setSearchQuery(query);
+    // Navigate to explorer with search query and filter
     const params = new URLSearchParams();
     // Always include search param (even if empty) to trigger search
     params.append('search', query.trim());
@@ -23,88 +43,125 @@ export default function Home() {
     setSelectedFilter(filter);
   };
 
-  const handleSurpriseClick = () => {
-    // Navigate to the surprise page
-    router.push('/surprise');
+  /*************  ✨ Windsurf Command ⭐  *************/
+  /**
+   * Navigates back to the home page
+   */
+  /*******  5e16d341-4f0a-4861-8fbe-418d8bc841bd  *******/
+  const handleBackToHome = () => {
+    router.push("/");
   };
 
+  // Create animated starfield background
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    // Set canvas size
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    // Create stars
+    const stars: {
+      x: number;
+      y: number;
+      radius: number;
+      opacity: number;
+      speed: number;
+    }[] = [];
+    const numStars = 200;
+
+    for (let i = 0; i < numStars; i++) {
+      stars.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        radius: Math.random() * 1.5,
+        opacity: Math.random(),
+        speed: Math.random() * 0.05,
+      });
+    }
+
+    // Animation loop
+    function animate() {
+      if (!ctx || !canvas) return;
+
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Draw stars with twinkling effect
+      stars.forEach((star) => {
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 255, 255, ${star.opacity})`;
+        ctx.fill();
+
+        // Twinkling effect
+        star.opacity += star.speed;
+        if (star.opacity > 1 || star.opacity < 0.2) {
+          star.speed = -star.speed;
+        }
+      });
+
+      requestAnimationFrame(animate);
+    }
+
+    animate();
+
+    // Handle resize
+    const handleResize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
+
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-800 to-black flex flex-col">
-      {/* Hero Section with Glass Search Bar - Full Screen */}
-      <section className="relative flex flex-col items-center justify-center flex-1 px-4 sm:px-8">
-        {/* Background decoration */}
-        <div className="absolute inset-0 overflow-hidden">
-          <div className="absolute inset-0 bg-[url('/globe.svg')] bg-center bg-no-repeat opacity-5 pointer-events-none" />
-          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl" />
-          <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl" />
-        </div>
-        
-        {/* Main content */}
-        <div className="relative z-10 text-center mb-12 space-y-6">
-          <h1 className="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold text-white mb-6 tracking-tight">
-            Explore NASA&apos;s<br />Universe
-          </h1>
-          <p className="text-xl sm:text-2xl text-white/70 mb-12 max-w-3xl mx-auto leading-relaxed">
-            Navigate gigapixel images of celestial bodies, discover planetary features, 
-            and explore the cosmos like never before
-          </p>
-        </div>
+    <div className="fixed inset-0 w-full h-full overflow-hidden">
+      {/* Animated starfield background */}
+      <canvas
+        ref={canvasRef}
+        className="fixed inset-0 w-full h-full"
+        style={{ zIndex: 0 }}
+      />
 
-        {/* Glass Search Bar - Centered and Prominent */}
-        <div className="relative z-10 w-full max-w-4xl px-4 flex flex-col items-center">
-          <GlassSearchBar 
-            onSearch={handleGlobalSearch}
-            placeholder="Search for craters, mountains, coordinates (e.g., 'Sinus Lunicus', 'De Vico')..."
-            selectedFilter={selectedFilter}
-            onFilterChange={handleFilterChange}
-          />
-          
-          {/* Search suggestions */}
-          <div className="mt-6 text-center">
-            <p className="text-sm text-white/40 mb-3">Popular searches:</p>
-            <div className="flex flex-wrap justify-center gap-2">
-              {['Marco Polo P', 'Bürg', 'Brown E', 'Short B'].map((term) => (
-                <button
-                  key={term}
-                  onClick={() => handleGlobalSearch(term)}
-                  className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white rounded-full text-sm transition-all border border-white/10 hover:border-white/20"
-                >
-                  {term}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+      {/* Back button with logo */}
+      <button
+        onClick={handleBackToHome}
+        className="absolute top-8 left-8 z-20 flex items-center hover:opacity-80 transition-opacity"
+        title="Back to home"
+      >
+        <Image
+          src="/logo_transparent.png"
+          alt="Logo"
+          width={200}
+          height={96}
+          className="h-24 w-auto"
+          priority
+        />
+      </button>
 
-        {/* Feature highlights */}
-        <div className="relative z-10 mt-16 grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto px-4">
-          <div className="text-center p-6 bg-white/5 backdrop-blur-sm rounded-xl border border-white/10">
-            <div className="text-4xl mb-3">🌍</div>
-            <h3 className="text-white font-semibold mb-2">Multiple Planets</h3>
-            <p className="text-white/60 text-sm">Explore Moon, Mars, Mercury, and Ceres</p>
-          </div>
-          <button 
-            onClick={handleSurpriseClick}
-            className="text-center p-6 bg-white/5 backdrop-blur-sm rounded-xl border border-white/10 hover:bg-white/10 hover:border-white/20 transition-all cursor-pointer"
-          >
-            <div className="text-4xl mb-3">🙈</div>
-            <h3 className="text-white font-semibold mb-2">Surprise me</h3>
-            <p className="text-white/60 text-sm">???</p>
-          </button>
-          <div className="text-center p-6 bg-white/5 backdrop-blur-sm rounded-xl border border-white/10">
-            <div className="text-4xl mb-3">🎯</div>
-            <h3 className="text-white font-semibold mb-2">Feature Markers</h3>
-            <p className="text-white/60 text-sm">Mark and discover planetary landmarks</p>
-          </div>
-        </div>
-      </section>
+      {/* Search bar centered in middle of page */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 w-full max-w-2xl px-4">
+        <GlassSearchBar
+          onSearch={handleSearch}
+          value={searchQuery}
+          placeholder={"Search planetary features, locations, coordinates..."}
+          selectedFilter={selectedFilter}
+          onFilterChange={handleFilterChange}
+        />
+      </div>
 
-      {/* Footer */}
-      <footer className="relative py-6 px-4 text-center border-t border-white/10">
-        <p className="text-white/40 text-sm">
-          Made with ❤️ by Slack Overflow
-        </p>
-      </footer>
+      {/* PhotoSphere Gallery */}
+      <div className="absolute inset-0 w-full h-full" style={{ zIndex: 1 }}>
+        <PhotoSphereGallery />
+      </div>
     </div>
   );
 }
