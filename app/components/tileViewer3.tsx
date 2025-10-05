@@ -66,6 +66,13 @@ const TREK_TEMPLATES: Record<
         "https://trek.nasa.gov/tiles/Moon/EQ/LRO_WAC_Mosaic_Global_303ppd_v02/1.0.0/default/default028mm/0/0/0.jpg",
       type: "base",
     },
+    {
+      id: "lro_lola_elevation",
+      title: "LRO LOLA Elevation (overlay)",
+      template:
+        "https://trek.nasa.gov/tiles/Moon/EQ/LRO_LOLA_ClrShade_Global_128ppd_v04/1.0.0/default/default028mm/{z}/{row}/{col}.png",
+      type: "overlay",
+    },
   ],
   mars: [
     {
@@ -74,6 +81,13 @@ const TREK_TEMPLATES: Record<
       template:
         "https://trek.nasa.gov/tiles/Mars/EQ/Mars_MGS_MOLA_ClrShade_merge_global_463m/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
       type: "base",
+    },
+    {
+      id: "mars_hirise",
+      title: "Mars HiRISE Imagery (overlay)",
+      template:
+        "https://trek.nasa.gov/tiles/Mars/EQ/Mars_HiRISE_Mosaic_Global_256ppd/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+      type: "overlay",
     },
   ],
   mercury: [
@@ -115,10 +129,11 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
   const compareViewerObjRef = useRef<any | null>(null);
 
   // state
+  const [isClient, setIsClient] = useState(false);
   const [datasets, setDatasets] = useState<DatasetListItem[]>([]);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const [layerConfig, setLayerConfig] = useState<ViewerConfigResponse | null>(null);
-  const [selectedBody, setSelectedBody] = useState<BodyKey>("unknown");
+  const [selectedBody, setSelectedBody] = useState<BodyKey>("moon");
   const [selectedOverlayId, setSelectedOverlayId] = useState<string>("");
   const [overlayOpacity, setOverlayOpacity] = useState<number>(0.5);
   const [viewMode, setViewMode] = useState<"single" | "split" | "overlay">("single");
@@ -130,6 +145,11 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
   useEffect(() => {
     if (externalSearchQuery) setSearchText(externalSearchQuery);
   }, [externalSearchQuery]);
+
+  // client-side detection to prevent hydration mismatch
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   // load datasets list from backend if configured (optional)
   useEffect(() => {
@@ -252,7 +272,7 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
     if (selectedBody === "moon") {
       loadMoonGazetteer();
     } else if (selectedBody === "mars") {
-      queryMarsCraterDB("");
+      queryMarsCraterDB();
     } else {
       setFeatures([]);
     }
@@ -328,7 +348,7 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
         maxImageCacheCount: 200
       });
 
-      setViewerObj(viewer);
+      viewerObjRef.current = viewer;
     })();
 
     return () => {
@@ -337,9 +357,7 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
     };
   }, [layerConfig]);
 
-  // TODO: Re-implement split/overlay viewer functionality
-  // The following useEffect is commented out because it depends on a createViewer function that was removed
-  /*
+  // Split/overlay viewer functionality
   // Initialize and sync viewers
   useEffect(() => {
     let mounted = true;
@@ -350,10 +368,10 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
     const cleanup = () => {
       try {
         if (mainViewer) { mainViewer.destroy(); mainViewer = null; }
-      } catch (e) { /* ignore */ }
+      } catch (e) { } // ignore
       try {
         if (compareViewer) { compareViewer.destroy(); compareViewer = null; }
-      } catch (e) { /* ignore */ }
+      } catch (e) { } // ignore
       viewerObjRef.current = null;
       compareViewerObjRef.current = null;
     };
@@ -388,6 +406,12 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
 
         // tile URL template from layerConfig
         const template = layerConfig.tile_url_template;
+        
+        // Create a template object for comparison logic
+        const foundTemplate = {
+          template: layerConfig.tile_url_template,
+          type: "base" as const
+        };
 
         const tileSource: any = {
           width: virtualWidth,
@@ -441,17 +465,30 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
           addCenterCrosshair(mainViewer);
         });
 
-        // If split or overlay mode and overlay layer selected, create compare viewer
+        // If split or overlay mode, create compare viewer
         const overlayTemplate = selectedOverlayId
           ? (TREK_TEMPLATES[selectedBody] || []).find((t) => t.id === selectedOverlayId)
           : null;
+        
+        // For split mode, use the overlay template if selected, otherwise use the main template
+        // For overlay mode, require an overlay template
+        const compareTemplate = overlayTemplate || (viewMode === "split" ? foundTemplate : null);
 
-        if ((viewMode === "split" || viewMode === "overlay") && overlayTemplate) {
+        console.log("Debug viewer creation:", {
+          viewMode,
+          selectedOverlayId,
+          overlayTemplate: !!overlayTemplate,
+          foundTemplate: !!foundTemplate,
+          compareTemplate: !!compareTemplate,
+          shouldCreateCompare: (viewMode === "split" || viewMode === "overlay") && compareTemplate
+        });
+
+        if ((viewMode === "split" || viewMode === "overlay") && compareTemplate) {
           if (!compareViewerRef.current) {
             console.error("Compare viewer container not found");
           } else {
-            // Build compare viewer tile source using overlayTemplate (fallback)
-            const overlayTileSource: any = {
+            // Build compare viewer tile source using compareTemplate
+            const compareTileSource: any = {
               width: virtualWidth,
               height: virtualHeight,
               tileSize,
@@ -463,8 +500,8 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
                 const rows = Math.pow(2, level);
                 const wrappedX = ((x % cols) + cols) % cols;
                 if (y < 0 || y >= rows) return null;
-                let url = overlayTemplate.template;
-                if (overlayTemplate.type === "temporal" && selectedDate) {
+                let url = compareTemplate.template;
+                if (compareTemplate.type === "temporal" && selectedDate) {
                   url = url.replace("{date}", selectedDate.replace(/-/g, ""));
                 }
                 return url
@@ -479,7 +516,7 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
             compareViewer = new osdModule({
               element: compareViewerRef.current,
               prefixUrl: "https://cdn.jsdelivr.net/npm/openseadragon@latest/build/openseadragon/images/",
-              tileSources: [overlayTileSource],
+              tileSources: [compareTileSource],
               showNavigator: viewMode === "split",
               navigatorSizeRatio: 0.14,
               gestureSettingsMouse: { clickToZoom: false },
@@ -491,14 +528,27 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
 
             compareViewerObjRef.current = compareViewer;
 
-            // Sync viewers (simple one-way sync from main -> compare and vice-versa)
-            const sync = (src: any, dst: any) => {
+            // Sync viewers with guards to prevent infinite recursion
+            let isUpdating = false;
+            const sync = (src: any, dst: any, id: string) => {
               if (!src || !dst) return;
               const handler = () => {
-                const center = src.viewport.getCenter();
-                const zoom = src.viewport.getZoom();
-                dst.viewport.panTo(center);
-                dst.viewport.zoomTo(zoom);
+                if (isUpdating) return; // Prevent infinite recursion
+                
+                try {
+                  isUpdating = true;
+                  const center = src.viewport.getCenter();
+                  const zoom = src.viewport.getZoom();
+                  
+                  // Use immediate=false to prevent triggering events during sync
+                  dst.viewport.panTo(center, false);
+                  dst.viewport.zoomTo(zoom, null, false);
+                } catch (error) {
+                  console.error(`Error syncing viewer ${id}:`, error);
+                } finally {
+                  // Reset the flag after a short delay to allow the sync to complete
+                  setTimeout(() => { isUpdating = false; }, 10);
+                }
               };
               src.addHandler("pan", handler);
               src.addHandler("zoom", handler);
@@ -510,8 +560,8 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
             };
 
             // attach bidirectional sync
-            const cleanupA = sync(mainViewer, compareViewer);
-            const cleanupB = sync(compareViewer, mainViewer);
+            const cleanupA = sync(mainViewer, compareViewer, "main->compare");
+            const cleanupB = sync(compareViewer, mainViewer, "compare->main");
 
             // set overlay opacity if in overlay mode (use world item)
             try {
@@ -540,10 +590,8 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
       compareViewerObjRef.current = null;
     };
   }, [selectedBody, selectedLayerId, selectedOverlayId, viewMode, selectedDate]);
-  */
 
   // Update overlay opacity when it changes
-  /* Commented out - depends on compareViewerObj from commented useEffect
   useEffect(() => {
     if (viewMode !== "overlay") return;
     const cmp = compareViewerObjRef.current;
@@ -554,8 +602,7 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
     } catch (err) {
       // ignore
     }
-  }, [overlayOpacity, compareViewerObj, viewMode]);
-  */
+  }, [overlayOpacity, viewMode]);
 
   // Helper to pick the currently selected template object
   function getActiveTemplate() {
@@ -801,7 +848,7 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
           )}
           {selectedBody === "mars" && (
             <button
-              onClick={() => queryMarsCraterDB("")}
+              onClick={() => queryMarsCraterDB()}
             >
               Reload Mars Craters
             </button>
@@ -809,9 +856,17 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
         </div>
 
         <div style={{ width: "100%", height: "640px", position: "relative" }}>
-          <div ref={viewerRef} style={{ width: viewMode === "split" ? "50%" : "100%", height: "100%", position: "absolute", left: 0, top: 0 }} />
-          {(viewMode === "split" || viewMode === "overlay") && (
-            <div ref={compareViewerRef} style={{ width: viewMode === "split" ? "50%" : "100%", height: "100%", position: "absolute", right: 0, top: 0, pointerEvents: "auto" }} />
+          {isClient ? (
+            <>
+              <div ref={viewerRef} style={{ width: viewMode === "split" ? "50%" : "100%", height: "100%", position: "absolute", left: 0, top: 0 }} />
+              {(viewMode === "split" || viewMode === "overlay") && (
+                <div ref={compareViewerRef} style={{ width: viewMode === "split" ? "50%" : "100%", height: "100%", position: "absolute", right: 0, top: 0, pointerEvents: "auto" }} />
+              )}
+            </>
+          ) : (
+            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "#000", color: "white" }}>
+              Loading viewer...
+            </div>
           )}
         </div>
       </div>
