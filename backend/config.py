@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     dataset_manifest: Path = Field(default=Path("backend/datasets.json"))
     cache_ttl_seconds: int = Field(default=600)
 
-    model_config = SettingsConfigDict(env_prefix="BACKEND_", env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_prefix="BACKEND_", env_file=".env", env_file_encoding="utf-8", extra="allow")
 
 
 settings = Settings()
