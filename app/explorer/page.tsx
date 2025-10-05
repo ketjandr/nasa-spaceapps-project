@@ -108,7 +108,7 @@ function ExplorerContent() {
       {/* Footer */}
       <footer className="relative py-6 px-4 text-center border-t border-white/10 mt-8">
         <p className="text-white/40 text-sm">
-          Powered by NASA GIBS, USGS Gazetteer, and Solar System Trek
+          Made with ❤️ by Slack Overflow
         </p>
       </footer>
     </div>
