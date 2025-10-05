@@ -14,6 +14,7 @@ export default function GlassSearchBar({
   onSearch, 
   placeholder = "Search planetary features, locations, coordinates...",
   className = "",
+  
   value: externalValue
 }: GlassSearchBarProps) {
   const [query, setQuery] = useState<string>("");
