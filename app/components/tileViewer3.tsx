@@ -274,7 +274,7 @@ export default function TileViewer({
   const compareViewerObjRef = useRef<any | null>(null);
   // Track whether external body has been synced at least once
   // If we have an external body prop at mount, consider it already synced
-  const hasExternalBodySynced = useRef<boolean>(externalSelectedBody !== undefined);
+  const hasExternalBodySynced = useRef<boolean>(initialBody !== undefined);
 
   // state
   const [isClient, setIsClient] = useState(false);
@@ -282,7 +282,7 @@ export default function TileViewer({
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const [layerConfig, setLayerConfig] = useState<ViewerConfigResponse | null>(null);
   const [selectedBody, setSelectedBody] = useState<BodyKey>(
-    externalSelectedBody ? (externalSelectedBody as BodyKey) : "moon"
+    initialBody ? (initialBody as BodyKey) : "moon"
   ); // Initialize from prop or default to moon
   const [selectedOverlayId, setSelectedOverlayId] = useState<string>("");
   const [overlayOpacity, setOverlayOpacity] = useState<number>(0.5);
@@ -293,7 +293,7 @@ export default function TileViewer({
   const [features, setFeatures] = useState<PlanetFeature[]>([]);
   const [searchText, setSearchText] = useState<string>(externalSearchQuery ?? "");
 
-  console.log('[TileViewer3 RENDER] externalSelectedBody:', externalSelectedBody, 'selectedBody:', selectedBody, 'selectedLayerId:', selectedLayerId, 'hasExternalBodySynced:', hasExternalBodySynced.current);
+  console.log('[TileViewer3 RENDER] initialBody:', initialBody, 'selectedBody:', selectedBody, 'selectedLayerId:', selectedLayerId, 'hasExternalBodySynced:', hasExternalBodySynced.current);
 
   // sync external search - including empty string to clear search
   useEffect(() => {

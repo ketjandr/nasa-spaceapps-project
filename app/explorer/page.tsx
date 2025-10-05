@@ -10,6 +10,7 @@ function ExplorerContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [selectedBody, setSelectedBody] = useState<string | null>(null);
   const [navigationParams, setNavigationParams] = useState<{
     body?: string;
     lat?: number;
@@ -29,21 +30,18 @@ function ExplorerContent() {
       setSearchQuery(''); // Clear search if not in URL
     }
     
-    // Always set selectedBody based on URL param (including null to clear it)
-    if (filter !== null) {
-      setSelectedBody(filter);
-    } else {
-      setSelectedBody(null); // Clear filter if not in URL
-    }
-
-    // Get navigation parameters from PhotoSphereGallery
-    const body = searchParams.get('body');
+    // Get navigation and body parameters
+    const bodyParam = searchParams.get('body');
     const lat = searchParams.get('lat');
     const lon = searchParams.get('lon');
     const zoom = searchParams.get('zoom');
-
+    
+    // Prioritize filter parameter for selectedBody, fallback to body parameter
+    const bodyValue = filter !== null ? filter : (bodyParam || null);
+    setSelectedBody(bodyValue);
+    
     setNavigationParams({
-      body: body || undefined,
+      body: bodyValue || undefined,
       lat: lat ? parseFloat(lat) : undefined,
       lon: lon ? parseFloat(lon) : undefined,
       zoom: zoom ? parseInt(zoom) : undefined,
@@ -140,8 +138,8 @@ function ExplorerContent() {
           {/* Tile viewer */}
           <div className="bg-gray-900/50 rounded-xl p-4 sm:p-6 backdrop-blur-sm border border-white/10 shadow-2xl">
             <TileViewerWrapper 
-              searchQuery={searchQuery} 
-              initialBody={navigationParams.body}
+              searchQuery={searchQuery}
+              initialBody={selectedBody || navigationParams.body}
               initialLat={navigationParams.lat}
               initialLon={navigationParams.lon}
               initialZoom={navigationParams.zoom}
