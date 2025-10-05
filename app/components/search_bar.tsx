@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, FormEvent, ChangeEvent } from "react";
-import { Search, ArrowUp } from "lucide-react";
+import { Search, ArrowUp, X } from "lucide-react";
 
 interface GlassSearchBarProps {
   onSearch?: (query: string) => void;
@@ -53,6 +53,18 @@ export default function GlassSearchBar({
         onChange={handleChange}
         className="flex-grow bg-transparent outline-none text-white placeholder-white/50 text-base"
       />
+
+      {/* Clear Button */}
+      {query.trim() && (
+        <button
+          type="button"
+          onClick={() => setQuery("")}
+          className="flex items-center justify-center text-white/50 hover:text-white/80 rounded-full w-7 h-7 mr-1 hover:bg-white/10 transition flex-shrink-0"
+          title="Clear search"
+        >
+          <X size={16} />
+        </button>
+      )}
 
       {/* Enter Button */}
       <button
