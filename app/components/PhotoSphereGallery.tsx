@@ -82,6 +82,7 @@ export default function PhotoSphereGallery({ showFooter = false, searchQuery = "
   const [isLoading, setIsLoading] = useState(true);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [loadingMessage, setLoadingMessage] = useState('Initializing planetary explorer...');
+  const hasLoadedOnce = useRef(false); // Track if we've loaded once
   
   const sceneRef = useRef<{
     animationId: number | null;
@@ -448,10 +449,12 @@ export default function PhotoSphereGallery({ showFooter = false, searchQuery = "
   useEffect(() => {
     if (!containerRef.current || !filteredImageData || filteredImageData.length === 0) return;
 
-    // Reset loading state when data changes
-    setIsLoading(true);
-    setLoadingProgress(0);
-    setLoadingMessage('Initializing planetary explorer...');
+    // Reset loading state when data changes (only if first time)
+    if (!hasLoadedOnce.current) {
+      setIsLoading(true);
+      setLoadingProgress(0);
+      setLoadingMessage('Initializing planetary explorer...');
+    }
 
     const container = containerRef.current;
     const RADIUS = 15;
@@ -513,12 +516,13 @@ export default function PhotoSphereGallery({ showFooter = false, searchQuery = "
     const positions = scatteredSpherePoints(COUNT);
     const textureLoader = new THREE.TextureLoader();
 
-    // Loading progress tracking
+    // Loading progress tracking - count actual loaded textures
     let loadedImages = 0;
     let totalImages = COUNT;
+    let actuallyLoadedTextures = 0; // Track textures that have finished loading
     
     const updateLoadingProgress = () => {
-      const progress = (loadedImages / totalImages) * 100;
+      const progress = (actuallyLoadedTextures / totalImages) * 100;
       setLoadingProgress(progress);
       
       if (progress < 30) {
@@ -531,9 +535,10 @@ export default function PhotoSphereGallery({ showFooter = false, searchQuery = "
         setLoadingMessage('Almost ready!');
       }
       
-      if (loadedImages >= totalImages) {
+      if (actuallyLoadedTextures >= totalImages) {
         setTimeout(() => {
           setIsLoading(false);
+          hasLoadedOnce.current = true; // Mark as loaded once
         }, 500); // Small delay for smooth transition
       }
     };
@@ -565,8 +570,8 @@ export default function PhotoSphereGallery({ showFooter = false, searchQuery = "
           group.add(sprite);
           sprites.push(sprite);
           
-          // Update loading progress
-          loadedImages++;
+          // Update loading progress - texture actually loaded
+          actuallyLoadedTextures++;
           updateLoadingProgress();
         },
         undefined,
@@ -612,8 +617,8 @@ export default function PhotoSphereGallery({ showFooter = false, searchQuery = "
           group.add(sprite);
           sprites.push(sprite);
           
-          // Update loading progress even for fallback images
-          loadedImages++;
+          // Update loading progress even for fallback images - texture loaded
+          actuallyLoadedTextures++;
           updateLoadingProgress();
         }
       );

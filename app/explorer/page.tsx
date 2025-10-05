@@ -1,8 +1,21 @@
+"use client";
+
 import React, { useState, useEffect, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import GlassSearchBar from "../components/search_bar";
 import Image from "next/image";
 import { useInstantSearch } from "../utils/localSearch";
+import dynamic from "next/dynamic";
+
+// Dynamically import TileViewer to avoid SSR issues
+const TileViewer3 = dynamic(() => import("../components/tileViewer3"), { 
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full flex items-center justify-center bg-black/80">
+      <p className="text-white">Loading tile viewer...</p>
+    </div>
+  )
+});
 
 interface PlanetaryBody {
   id: string;
@@ -20,6 +33,7 @@ interface FeaturePin {
   lon: number;
   category: string;
   image?: string;
+  imageUrl?: string; // For tile viewer URL
 }
 
 export default function ExplorerContent() {
@@ -28,11 +42,68 @@ export default function ExplorerContent() {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [selectedBody, setSelectedBody] = useState<string>("Moon");
   const [selectedFeature, setSelectedFeature] = useState<FeaturePin | null>(null);
-  const [viewMode, setViewMode] = useState<'map' | 'satellite'>('satellite');
+  const [viewMode, setViewMode] = useState<'map' | 'satellite' | 'tiles'>('satellite');
+  const [featureImages, setFeatureImages] = useState<Record<string, string>>({});
+  const [loadingImages, setLoadingImages] = useState<Set<string>>(new Set());
   const mapRef = useRef<HTMLDivElement>(null);
 
   // Get search results using instant search
   const searchResults = useInstantSearch(searchQuery, 50);
+
+  // Fetch feature images from backend
+  const fetchFeatureImage = async (featureName: string, body: string, lat: number, lon: number): Promise<string | null> => {
+    const cacheKey = `${featureName}-${body}`;
+    
+    // Check if already loaded or loading
+    if (featureImages[cacheKey]) {
+      return featureImages[cacheKey];
+    }
+    
+    if (loadingImages.has(cacheKey)) {
+      return null; // Still loading
+    }
+    
+    // Mark as loading
+    setLoadingImages(prev => new Set(prev).add(cacheKey));
+    
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+      const response = await fetch(
+        `${backendUrl}/images/search?feature_name=${encodeURIComponent(featureName)}&target_body=${encodeURIComponent(body)}&lat=${lat}&lon=${lon}`
+      );
+      
+      if (response.ok) {
+        const data = await response.json();
+        // Get the first image from NASA or Trek tiles
+        const firstImage = data.nasa_images?.[0]?.url || 
+                          data.trek_tiles?.[0]?.url || 
+                          data.mission_images?.[0]?.url ||
+                          `https://picsum.photos/400/300?random=${featureName}`;
+        
+        setFeatureImages(prev => ({...prev, [cacheKey]: firstImage}));
+        setLoadingImages(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(cacheKey);
+          return newSet;
+        });
+        
+        return firstImage;
+      }
+    } catch (error) {
+      console.error(`Failed to fetch image for ${featureName}:`, error);
+    }
+    
+    // Fallback to placeholder
+    const fallback = `https://picsum.photos/400/300?random=${featureName}`;
+    setFeatureImages(prev => ({...prev, [cacheKey]: fallback}));
+    setLoadingImages(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(cacheKey);
+      return newSet;
+    });
+    
+    return fallback;
+  };
 
   // Planetary bodies data
   const planetaryBodies: PlanetaryBody[] = [
@@ -76,15 +147,26 @@ export default function ExplorerContent() {
   };
 
   // Convert search results to feature pins
-  const featurePins: FeaturePin[] = searchResults.map((result, index) => ({
-    id: `${result.id}-${index}`,
-    name: result.name,
-    body: result.body,
-    lat: result.coordinates?.lat || (Math.random() - 0.5) * 180,
-    lon: result.coordinates?.lon || (Math.random() - 0.5) * 360,
-    category: result.category,
-    image: `https://picsum.photos/400/300?random=${index}`
-  })).filter((pin) => pin.body === selectedBody);
+  const featurePins: FeaturePin[] = searchResults.map((result, index) => {
+    const cacheKey = `${result.name}-${result.body}`;
+    const lat = result.coordinates?.lat || (Math.random() - 0.5) * 180;
+    const lon = result.coordinates?.lon || (Math.random() - 0.5) * 360;
+    
+    // Trigger image fetch if not already cached
+    if (!featureImages[cacheKey] && !loadingImages.has(cacheKey)) {
+      fetchFeatureImage(result.name, result.body, lat, lon);
+    }
+    
+    return {
+      id: `${result.id}-${index}`,
+      name: result.name,
+      body: result.body,
+      lat,
+      lon,
+      category: result.category,
+      image: featureImages[cacheKey] || `https://picsum.photos/400/300?random=${index}` // Fallback while loading
+    };
+  }).filter((pin) => pin.body === selectedBody);
 
   return (
     <div className="min-h-screen bg-black">
@@ -137,6 +219,16 @@ export default function ExplorerContent() {
                 }`}
               >
                 Terrain
+              </button>
+              <button
+                onClick={() => setViewMode('tiles')}
+                className={`px-3 py-1 rounded text-sm transition-all ${
+                  viewMode === 'tiles' 
+                    ? 'bg-blue-500 text-white' 
+                    : 'text-white/60 hover:text-white'
+                }`}
+              >
+                Tile Viewer
               </button>
             </div>
           </div>
@@ -206,13 +298,20 @@ export default function ExplorerContent() {
 
         {/* Main Map Area */}
         <div className="flex-1 relative">
-          <div ref={mapRef} className="w-full h-full relative overflow-hidden">
-            {/* Map Background */}
-            <div className={`absolute inset-0 ${
-              viewMode === 'satellite' 
-                ? 'bg-gradient-to-br from-gray-900 via-gray-800 to-black'
-                : 'bg-gradient-to-br from-amber-900 via-orange-900 to-red-900'
-            }`}>
+          {viewMode === 'tiles' ? (
+            /* Tile Viewer Mode - Full NASA TREK tile maps */
+            <div className="w-full h-full">
+              <TileViewer3 />
+            </div>
+          ) : (
+            /* Simple Map Mode */
+            <div ref={mapRef} className="w-full h-full relative overflow-hidden">
+              {/* Map Background */}
+              <div className={`absolute inset-0 ${
+                viewMode === 'satellite' 
+                  ? 'bg-gradient-to-br from-gray-900 via-gray-800 to-black'
+                  : 'bg-gradient-to-br from-amber-900 via-orange-900 to-red-900'
+              }`}>
               {/* Surface Texture Overlay */}
               <div className="absolute inset-0 opacity-30">
                 <div className="w-full h-full bg-repeat" style={{
@@ -278,6 +377,7 @@ export default function ExplorerContent() {
               </div>
             </div>
           </div>
+          )}
         </div>
 
         {/* Right Sidebar - Feature Details */}

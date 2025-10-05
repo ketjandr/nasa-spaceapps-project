@@ -1,7 +1,7 @@
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 
 /* D-Din alternative: Using Inter as a modern, clean font similar to D-Din */
+/* Note: Inter font is loaded via Next.js font optimization in layout.tsx */
 :root {
   --background: #ffffff;
   --foreground: #171717;
