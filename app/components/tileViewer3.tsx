@@ -4,12 +4,34 @@
 import React, { useEffect, useRef, useState } from "react";
 import type OpenSeadragon from "openseadragon";
 import JSZip from "jszip";
-import { xml2json } from "xml-js"; // optional helper if you prefer parsing XML to JSON (not required)
-import toGeoJSON from "togeojson"; // note: togeojson exports DOM parsers; we'll use via DOMParser
-import type OpenSeadragon from "openseadragon";
-// (If togeojson import issues, you can also parse KML manually or use another KML->GeoJSON lib.)
+import toGeoJSON from "togeojson";
+import type { FeatureCollection, Point } from "geojson";
 
-type BodyKey = "moon" | "mars" | "mercury" | "ceres";
+type BodyKey =
+  | "milky_way"
+  | "moon"
+  | "mars"
+  | "mercury"
+  | "ceres"
+  | "unknown";
+
+type DatasetListItem = {
+  id: string;
+  title: string;
+  body?: string | null;
+};
+
+type ViewerConfigResponse = {
+  id: string;
+  title: string;
+  tile_url_template: string;
+  min_zoom: number;
+  max_zoom: number;
+  tile_size: number;
+  projection?: string | null;
+  attribution?: string | null;
+  body?: string | null;
+};
 
 const TREK_TEMPLATES: Record<
   BodyKey,
@@ -96,33 +118,8 @@ const TREK_TEMPLATES: Record<
         "https://trek.nasa.gov/tiles/Ceres/EQ/Ceres_Dawn_FC_HAMO_ClrShade_DLR_Global_60ppd_Oct2016/1.0.0/default/default028mm/0/0/0.jpg",
     },
   ],
-import toGeoJSON from "togeojson";
-import type { FeatureCollection, Point } from "geojson";
-
-type BodyKey =
-  | "milky_way"
-  | "moon"
-  | "mars"
-  | "mercury"
-  | "ceres"
-  | "unknown";
-
-type DatasetListItem = {
-  id: string;
-  title: string;
-  body?: string | null;
-};
-
-type ViewerConfigResponse = {
-  id: string;
-  title: string;
-  tile_url_template: string;
-  min_zoom: number;
-  max_zoom: number;
-  tile_size: number;
-  projection?: string | null;
-  attribution?: string | null;
-  body?: string | null;
+  milky_way: [],
+  unknown: [],
 };
 
 const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "";
@@ -226,28 +223,13 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
     if (selectedBody === "moon") {
       loadMoonGazetteer();
     } else if (selectedBody === "mars") {
-      queryMarsCraterDB();
+      queryMarsCraterDB("");
     } else {
       setFeatures([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBody]);
 
-  // Create OpenSeadragon viewer with specified options
-  const createViewer = async (
-    elementRef: React.RefObject<HTMLDivElement | null>,
-    template: typeof TREK_TEMPLATES[BodyKey][0],
-    osd: any
-  ) => {
-    if (!elementRef.current) return null;
-
-    // Wait for the element to be properly mounted
-    await new Promise(resolve => setTimeout(resolve, 0));
-
-    const maxLevel = 8;
-    const tileSize = 256;
-    const width = tileSize * Math.pow(2, maxLevel + 1);
-    const height = tileSize * Math.pow(2, maxLevel);
   // Keep openseadragon import in effect (client-only)
   useEffect(() => {
     let viewer: OpenSeadragon.Viewer | null = null;
@@ -268,32 +250,6 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
       const width = tileSize * Math.pow(2, maxLevel + 1);
       const height = tileSize * Math.pow(2, maxLevel);
 
-    const tileSource = {
-      width,
-      height,
-      tileSize,
-      minLevel: 0,
-      maxLevel,
-      getTileUrl: function (level: number, x: number, y: number) {
-        const maxCols = Math.pow(2, level + 1);
-        const maxRows = Math.pow(2, level);
-        // Ensure proper wrapping for both base and overlay layers
-        x = ((x % maxCols) + maxCols) % maxCols;
-        if (y < 0 || y >= maxRows) return null;
-        
-        let url = template.template;
-        if (template.type === 'temporal' && selectedDate) {
-          url = url.replace('{date}', selectedDate.replace(/-/g, ''));
-        }
-        
-        // Ensure x coordinate is properly wrapped for infinite scrolling
-        const wrappedX = x % maxCols;
-        return url
-          .replace("{z}", String(level))
-          .replace("{row}", String(y))
-          .replace("{col}", String(wrappedX));
-      },
-    };
       const tileSource: OpenSeadragon.TileSourceOptions = {
         width,
         height,
@@ -320,35 +276,41 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
         },
       };
 
-    const viewer = new osd({
-      element: elementRef.current,
-      prefixUrl: "https://cdn.jsdelivr.net/npm/openseadragon@latest/build/openseadragon/images/",
-      showNavigator: true,
-      navigatorSizeRatio: 0.15,
-      tileSources: [tileSource],
-      gestureSettingsMouse: { clickToZoom: false },
-      constrainDuringPan: true,
-      homeFillsViewer: true,
-      visibilityRatio: 0.5,
-      minZoomImageRatio: 0.8,
-      maxZoomPixelRatio: 2.0,
-      defaultZoomLevel: 1,
-      wrapHorizontal: true,
-      wrapVertical: false,
-      viewportConstraint: new osd.Rect(0, -0.1, 1, 1.2),
-      immediateRender: true,
-      preserveImageSizeOnResize: true,
-      // Prevent animation during sync to avoid feedback loops
-      animationTime: 0,
-      springStiffness: 5,
-      maxImageCacheCount: 200
-    });
+      viewer = new osd.Viewer({
+        element: viewerRef.current,
+        prefixUrl: "https://cdn.jsdelivr.net/npm/openseadragon@latest/build/openseadragon/images/",
+        showNavigator: true,
+        navigatorSizeRatio: 0.15,
+        tileSources: [tileSource as any],
+        gestureSettingsMouse: { clickToZoom: false },
+        constrainDuringPan: true,
+        homeFillsViewer: true,
+        visibilityRatio: 0.5,
+        minZoomImageRatio: 0.8,
+        maxZoomPixelRatio: 2.0,
+        defaultZoomLevel: 1,
+        wrapHorizontal: true,
+        wrapVertical: false,
+        viewportConstraint: new osd.Rect(0, -0.1, 1, 1.2),
+        immediateRender: true,
+        preserveImageSizeOnResize: true,
+        animationTime: 0,
+        springStiffness: 5,
+        maxImageCacheCount: 200
+      });
 
-      viewer.addHandler('open', function() {
-        addOverlays(viewer);
-      });    return viewer;
-  };
+      setViewerObj(viewer);
+    })();
 
+    return () => {
+      mounted = false;
+      if (viewer) viewer.destroy();
+    };
+  }, [layerConfig]);
+
+  // TODO: Re-implement split/overlay viewer functionality
+  // The following useEffect is commented out because it depends on a createViewer function that was removed
+  /*
   // Initialize and sync viewers
   useEffect(() => {
     let mounted = true;
@@ -519,8 +481,10 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
       cleanup();
     };
   }, [selectedBody, selectedLayerId, selectedOverlayId, viewMode, selectedDate]);
+  */
 
   // Update overlay opacity when it changes
+  /* Commented out - depends on compareViewerObj from commented useEffect
   useEffect(() => {
     if (viewMode === "overlay" && compareViewerObj) {
       try {
@@ -533,15 +497,13 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
       }
     }
   }, [overlayOpacity, compareViewerObj, viewMode]);
+  */
 
   // Helper to pick the currently selected template object
   function getActiveTemplate() {
     const list = TREK_TEMPLATES[selectedBody];
     return list.find((l) => l.id === selectedLayerId) || list[0];
   }
-      if (viewer) viewer.destroy();
-    };
-  }, [layerConfig]);
 
   // USGS Gazetteer KML/KMZ example links are available from the USGS "KML and Shapefile downloads" page.
   // Example KMZ (center points) for Moon and Mars (listed on USGS downloads page):
@@ -693,27 +655,6 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
       console.error('Error adding overlays:', error);
     }
   }
-    // Add center crosshair
-    const centerElement = document.createElement('div');
-    centerElement.style.cssText = `
-      width: 20px;
-      height: 20px;
-      position: absolute;
-      pointer-events: none;
-      border: 2px solid rgba(255, 255, 255, 0.8);
-      border-radius: 50%;
-    `;
-    
-    // Add the center overlay (stays fixed in viewport center)
-    viewerObj.addOverlay({
-      element: centerElement,
-      location: new viewerObj.viewport.pointFromPixel(
-        viewerObj.viewport.getContainerSize().x / 2,
-        viewerObj.viewport.getContainerSize().y / 2
-      ),
-      placement: 'CENTER',
-      checkResize: false
-    });
 
   // Utility: pan/zoom viewer to lon/lat for NASA Trek tiles
   function panToLonLat(lon: number, lat: number, zoomLevel = 4) {
@@ -904,7 +845,7 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
           )}
           {selectedBody === "mars" && (
             <button
-              onClick={() => queryMarsCraterDB()}
+              onClick={() => queryMarsCraterDB("")}
             >
               Reload Mars Craters
             </button>
