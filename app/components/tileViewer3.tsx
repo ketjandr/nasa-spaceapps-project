@@ -6,12 +6,29 @@ import JSZip from "jszip";
 import toGeoJSON from "togeojson";
 import type { FeatureCollection, Point } from "geojson";
 
-// --- types -----------------------------------------------------------
-type BodyKey = "moon" | "mars" | "mercury" | "ceres" | "unknown";
+type BodyKey =
+  | "milky_way"
+  | "moon"
+  | "mars"
+  | "mercury"
+  | "ceres"
+  | "unknown";
 
 type DatasetListItem = {
   id: string;
   title: string;
+  body?: string | null;
+};
+
+type ViewerConfigResponse = {
+  id: string;
+  title: string;
+  tile_url_template: string;
+  min_zoom: number;
+  max_zoom: number;
+  tile_size: number;
+  projection?: string | null;
+  attribution?: string | null;
   body?: string | null;
 };
 
@@ -77,6 +94,7 @@ const TREK_TEMPLATES: Record<
       type: "base",
     },
   ],
+  milky_way: [],
   unknown: [],
 };
 
@@ -234,14 +252,95 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
     if (selectedBody === "moon") {
       loadMoonGazetteer();
     } else if (selectedBody === "mars") {
-      queryMarsCraterDB();
+      queryMarsCraterDB("");
     } else {
       setFeatures([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBody]);
 
-  // ---------- OpenSeadragon viewer initialization & sync ----------
+  // Keep openseadragon import in effect (client-only)
+  useEffect(() => {
+    let viewer: OpenSeadragon.Viewer | null = null;
+    let osd: typeof import("openseadragon") | null = null;
+    let mounted = true;
+
+    (async () => {
+      if (!layerConfig) return;
+      const OSDModule = await import("openseadragon");
+      osd = (OSDModule.default ?? OSDModule) as typeof import("openseadragon");
+      if (!viewerRef.current || !mounted) return;
+
+      // Set maxLevel and tileSize for the tiling scheme
+      const minZoom = layerConfig.min_zoom;
+      const maxLevel = layerConfig.max_zoom - layerConfig.min_zoom;
+      const tileSize = layerConfig.tile_size;
+      // At maxLevel, columns = 2^(maxLevel+1), rows = 2^maxLevel
+      const width = tileSize * Math.pow(2, maxLevel + 1);
+      const height = tileSize * Math.pow(2, maxLevel);
+
+      const tileSource: OpenSeadragon.TileSourceOptions = {
+        width,
+        height,
+        tileSize,
+        minLevel: 0,
+        maxLevel,
+        getTileUrl: function (level: number, x: number, y: number) {
+          const maxCols = Math.pow(2, level + 1);
+          const maxRows = Math.pow(2, level);
+
+          // Handle horizontal wrapping
+          x = ((x % maxCols) + maxCols) % maxCols;
+
+          // Constrain vertical position
+          if (y < 0 || y >= maxRows) return null;
+
+          const z = level + minZoom;
+          return layerConfig.tile_url_template
+            .replace("{z}", String(z))
+            .replace("{x}", String(x))
+            .replace("{y}", String(y))
+            .replace("{col}", String(x))
+            .replace("{row}", String(y));
+        },
+      };
+
+      viewer = new osd.Viewer({
+        element: viewerRef.current,
+        prefixUrl: "https://cdn.jsdelivr.net/npm/openseadragon@latest/build/openseadragon/images/",
+        showNavigator: true,
+        navigatorSizeRatio: 0.15,
+        tileSources: [tileSource as any],
+        gestureSettingsMouse: { clickToZoom: false },
+        constrainDuringPan: true,
+        homeFillsViewer: true,
+        visibilityRatio: 0.5,
+        minZoomImageRatio: 0.8,
+        maxZoomPixelRatio: 2.0,
+        defaultZoomLevel: 1,
+        wrapHorizontal: true,
+        wrapVertical: false,
+        viewportConstraint: new osd.Rect(0, -0.1, 1, 1.2),
+        immediateRender: true,
+        preserveImageSizeOnResize: true,
+        animationTime: 0,
+        springStiffness: 5,
+        maxImageCacheCount: 200
+      });
+
+      setViewerObj(viewer);
+    })();
+
+    return () => {
+      mounted = false;
+      if (viewer) viewer.destroy();
+    };
+  }, [layerConfig]);
+
+  // TODO: Re-implement split/overlay viewer functionality
+  // The following useEffect is commented out because it depends on a createViewer function that was removed
+  /*
+  // Initialize and sync viewers
   useEffect(() => {
     let mounted = true;
     let osdModule: any = null;
@@ -440,9 +539,11 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
       viewerObjRef.current = null;
       compareViewerObjRef.current = null;
     };
-  }, [layerConfig, selectedBody, selectedOverlayId, viewMode, selectedDate, overlayOpacity]);
+  }, [selectedBody, selectedLayerId, selectedOverlayId, viewMode, selectedDate]);
+  */
 
-  // update overlay opacity when value changes (overlay mode)
+  // Update overlay opacity when it changes
+  /* Commented out - depends on compareViewerObj from commented useEffect
   useEffect(() => {
     if (viewMode !== "overlay") return;
     const cmp = compareViewerObjRef.current;
@@ -453,9 +554,25 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
     } catch (err) {
       // ignore
     }
-  }, [overlayOpacity, viewMode]);
+  }, [overlayOpacity, compareViewerObj, viewMode]);
+  */
 
-  // ---------- KMZ / Gazetteer parsing ----------
+  // Helper to pick the currently selected template object
+  function getActiveTemplate() {
+    const list = TREK_TEMPLATES[selectedBody];
+    return list.find((l) => l.id === selectedLayerId) || list[0];
+  }
+
+  // USGS Gazetteer KML/KMZ example links are available from the USGS "KML and Shapefile downloads" page.
+  // Example KMZ (center points) for Moon and Mars (listed on USGS downloads page):
+  // - Moon center points (KMZ):
+  //   https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/MOON_nomenclature_center_pts.kmz
+  // - Mars center points (KMZ):
+  //   https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/MARS_nomenclature_center_pts.kmz
+  // (Those downloads are documented on the USGS Gazetteer downloads page.)
+  // See Sources at the bottom for the official page link.
+
+  // Fetch and parse a KMZ (USGS Gazetteer center points) and convert to GeoJSON (togeojson)
   async function fetchGazetteerKMZ(kmzUrl: string): Promise<PlanetFeature[]> {
     try {
       // If backend proxy set, use it to avoid CORS problems; otherwise try direct fetch
@@ -561,7 +678,7 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
     }
   }
 
-  // Pan & zoom to lon/lat and add a pulse marker overlay
+  // Utility: pan/zoom viewer to lon/lat for NASA Trek tiles
   function panToLonLat(lon: number, lat: number, zoomLevel = 4) {
     const v = viewerObjRef.current;
     if (!v) return;
@@ -677,9 +794,18 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
           {selectedBody === "moon" && <button onClick={loadMoonGazetteer}>Load Moon Gazetteer</button>}
           {selectedBody === "mars" && <button onClick={() => queryMarsCraterDB()}>Load Mars Craters</button>}
 
-          <div style={{ marginLeft: "auto" }}>
-            {layerConfig?.attribution && <small style={{ color: "#666" }}>{layerConfig.attribution}</small>}
-          </div>
+          {selectedBody === "moon" && (
+            <button style={{ marginLeft: "auto" }} onClick={loadMoonGazetteer}>
+              Reload Moon Gazetteer
+            </button>
+          )}
+          {selectedBody === "mars" && (
+            <button
+              onClick={() => queryMarsCraterDB("")}
+            >
+              Reload Mars Craters
+            </button>
+          )}
         </div>
 
         <div style={{ width: "100%", height: "640px", position: "relative" }}>

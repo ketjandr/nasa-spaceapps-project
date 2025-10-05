@@ -2,7 +2,7 @@
 
 import { useEffect, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import Image from "next/image";
 import GlassSearchBar from '../components/search_bar';
 import TileViewerWrapper from '../components/tileViewWrapper';
 
@@ -35,14 +35,20 @@ function ExplorerContent() {
       <header className="sticky top-0 z-50 bg-gray-900/80 backdrop-blur-md border-b border-white/10">
         <div className="max-w-[1800px] mx-auto px-4 sm:px-8 py-4">
           <div className="flex items-center gap-4">
-            {/* Back button */}
+            {/* Logo - click to go home */}
             <button
               onClick={handleBackToHome}
-              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-full transition-all border border-white/10 hover:border-white/20"
+              className="flex items-center hover:opacity-80 transition-opacity"
               title="Back to home"
             >
-              <ArrowLeft size={20} />
-              <span className="hidden sm:inline">Home</span>
+              <Image 
+                src="/logo_transparent.png" 
+                alt="Logo" 
+                width={100}
+                height={48}
+                className="h-12 w-auto"
+                priority
+              />
             </button>
 
             {/* Search bar in header */}
@@ -50,7 +56,7 @@ function ExplorerContent() {
               <GlassSearchBar 
                 onSearch={handleSearch}
                 value={searchQuery}
-                placeholder={searchQuery || "Search planetary features, locations, coordinates..."}
+                placeholder={"Search planetary features, locations, coordinates..."}
               />
             </div>
           </div>
