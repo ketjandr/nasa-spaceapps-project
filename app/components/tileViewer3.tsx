@@ -252,8 +252,8 @@ const TREK_TEMPLATES: Record<
 };
 
 // backend config
-const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "";
-const backendBase = backendUrl ? backendUrl.replace(/\/$/, "") : "";
+const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
+const backendBase = backendUrl ? backendUrl.replace(/\/$/, "") : "http://localhost:8000";
 
 // --- component -------------------------------------------------------
 interface TileViewerProps {

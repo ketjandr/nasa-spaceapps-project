@@ -221,6 +221,178 @@ async def generate_search_summary(results: List[Dict[str, Any]], query: str) -> 
         return f"Found {len(results)} results"
 
 
+async def generate_discovery_recommendations(
+    user_interests: List[str], 
+    available_features: List[Dict[str, Any]],
+    limit: int = 6
+) -> List[Dict[str, Any]]:
+    """
+    Generate personalized feature recommendations using DeepSeek.
+    
+    Args:
+        user_interests: List of topics user has shown interest in
+        available_features: List of available features to recommend from
+        limit: Number of recommendations to return
+        
+    Returns:
+        List of recommended features with reasoning
+    """
+    
+    if not DEEPSEEK_API_KEY or not available_features:
+        # Fallback to random selection
+        import random
+        return random.sample(available_features, min(limit, len(available_features)))
+    
+    try:
+        # Prepare feature summary for AI
+        feature_summary = []
+        for f in available_features[:50]:  # Limit to avoid token overflow
+            feature_summary.append({
+                "name": f.get("name", ""),
+                "body": f.get("body", ""),
+                "category": f.get("category", ""),
+                "keywords": f.get("keywords", [])
+            })
+        
+        system_prompt = """You are a NASA dataset discovery assistant. Recommend the most interesting and relevant planetary features based on user interests.
+
+Return a JSON array of recommended feature names, ordered by relevance. Include exactly {limit} recommendations.
+
+Consider:
+- User's previous interests and exploration patterns
+- Scientific significance of features
+- Visual appeal and uniqueness
+- Educational value
+- Diversity across different bodies and feature types
+
+Format: ["Feature Name 1", "Feature Name 2", ...]"""
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                DEEPSEEK_API_URL,
+                headers={
+                    "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "deepseek-chat",
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": system_prompt.format(limit=limit)
+                        },
+                        {
+                            "role": "user",
+                            "content": f"User interests: {user_interests}\n\nAvailable features: {json.dumps(feature_summary)}\n\nRecommend {limit} features:"
+                        }
+                    ],
+                    "max_tokens": 300,
+                    "temperature": 0.8
+                },
+                timeout=REQUEST_TIMEOUT
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                recommendations_text = result["choices"][0]["message"]["content"]
+                
+                try:
+                    # Parse JSON response
+                    recommended_names = json.loads(recommendations_text)
+                    
+                    # Find matching features
+                    recommended_features = []
+                    for name in recommended_names:
+                        for feature in available_features:
+                            if feature.get("name", "").lower() == name.lower():
+                                recommended_features.append(feature)
+                                break
+                    
+                    return recommended_features[:limit]
+                    
+                except json.JSONDecodeError:
+                    # Fallback if JSON parsing fails
+                    pass
+                    
+    except Exception as e:
+        print(f"DeepSeek recommendation error: {e}")
+    
+    # Fallback: return diverse random selection
+    import random
+    return random.sample(available_features, min(limit, len(available_features)))
+
+
+async def generate_feature_insights(feature: Dict[str, Any]) -> str:
+    """
+    Generate interesting insights about a specific planetary feature using DeepSeek.
+    
+    Args:
+        feature: Feature data with name, body, category, coordinates, etc.
+        
+    Returns:
+        Engaging insight text about the feature
+    """
+    
+    if not DEEPSEEK_API_KEY:
+        return f"Explore {feature.get('name', 'this feature')} on {feature.get('body', 'this celestial body')}."
+    
+    try:
+        system_prompt = """You are a planetary science communicator. Generate fascinating, educational insights about planetary features in 1-2 engaging sentences.
+
+Focus on:
+- What makes this feature scientifically interesting
+- How it formed or what processes created it  
+- Its scale and significance
+- What it tells us about planetary geology
+- Why it's worth exploring
+
+Keep it accessible but scientifically accurate."""
+
+        feature_description = f"""
+Feature: {feature.get('name', 'Unknown')}
+Location: {feature.get('body', 'Unknown')} 
+Type: {feature.get('category', 'Unknown')}
+Coordinates: {feature.get('coordinates', {})}
+"""
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                DEEPSEEK_API_URL,
+                headers={
+                    "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "deepseek-chat",
+                    "messages": [
+                        {
+                            "role": "system", 
+                            "content": system_prompt
+                        },
+                        {
+                            "role": "user",
+                            "content": feature_description
+                        }
+                    ],
+                    "max_tokens": 150,
+                    "temperature": 0.7
+                },
+                timeout=REQUEST_TIMEOUT
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result["choices"][0]["message"]["content"].strip()
+                
+    except Exception as e:
+        print(f"DeepSeek insight error: {e}")
+    
+    # Fallback
+    feature_name = feature.get('name', 'this feature')
+    body = feature.get('body', 'this celestial body')
+    return f"Discover the fascinating geology of {feature_name} on {body}."
+
+
 # Test function
 if __name__ == "__main__":
     import asyncio

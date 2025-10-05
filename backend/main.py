@@ -89,6 +89,152 @@ async def test_search():
             'message': 'Run: python backend/scripts/kmzparser.py moon'
         }
 
+# ========== INTELLIGENT SEARCH ENDPOINTS ==========
+
+class IntelligentSearchRequest(BaseModel):
+    query: str
+    session_id: Optional[str] = None
+    limit: int = 50
+
+
+class SearchSuggestionsRequest(BaseModel):
+    session_id: str
+
+
+@app.post("/api/intelligent-search")
+async def intelligent_search(request: IntelligentSearchRequest):
+    """
+    Natural language search with DeepSeek AI understanding
+    
+    Examples:
+    - "show me large craters on mars"
+    - "mountains taller than 5km"
+    - "apollo landing sites"
+    """
+    try:
+        from .intelligent_search import is_complex_query, understand_query, apply_intelligent_filters
+        from .search_engine import search_engine
+        from .search_history_service import SearchHistoryService
+        import json
+        
+        # Load features from search engine
+        all_features = search_engine.features
+        
+        # Detect query complexity
+        is_complex = is_complex_query(request.query)
+        
+        if is_complex:
+            # Use DeepSeek AI to understand query
+            understanding = await understand_query(request.query)
+            
+            # Apply intelligent filtering
+            filtered = apply_intelligent_filters(all_features, understanding)
+            
+            # Record search in history
+            if request.session_id:
+                SearchHistoryService.record_search(
+                    session_id=request.session_id,
+                    query=request.query,
+                    query_type="complex",
+                    results_count=len(filtered),
+                    understanding=understanding.to_dict()
+                )
+            
+            return {
+                "status": "success",
+                "query_type": "complex",
+                "understanding": understanding.to_dict(),
+                "results": filtered[:request.limit],
+                "total_results": len(filtered)
+            }
+        else:
+            # Use fast local search for simple queries
+            from .search_engine import search_features
+            result = search_features(request.query)
+            
+            # Record search in history
+            if request.session_id:
+                SearchHistoryService.record_search(
+                    session_id=request.session_id,
+                    query=request.query,
+                    query_type="simple",
+                    results_count=len(result.get("results", []))
+                )
+            
+            return {
+                "status": "success",
+                "query_type": "simple",
+                "results": result.get("results", [])[:request.limit],
+                "total_results": len(result.get("results", []))
+            }
+            
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/search-suggestions")
+async def get_search_suggestions(request: SearchSuggestionsRequest):
+    """Get personalized search suggestions based on user history"""
+    try:
+        from .search_history_service import SearchHistoryService
+        
+        suggestions = SearchHistoryService.get_personalized_suggestions(
+            request.session_id
+        )
+        
+        return {
+            "status": "success",
+            "suggestions": suggestions
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/search-history/{session_id}")
+async def get_user_search_history(session_id: str, limit: int = 10):
+    """Get user's recent search history"""
+    try:
+        from .search_history_service import SearchHistoryService
+        
+        history = SearchHistoryService.get_search_history(session_id, limit)
+        
+        return {
+            "status": "success",
+            "history": history
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/trending-searches")
+async def get_trending_searches(days: int = 7, limit: int = 5):
+    """Get trending search queries across all users"""
+    try:
+        from .search_history_service import SearchHistoryService
+        
+        trending = SearchHistoryService.get_trending_searches(days, limit)
+        
+        return {
+            "status": "success",
+            "trending": trending
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/generate-session")
+async def generate_session():
+    """Generate a new session ID for a user"""
+    from .search_history_service import SearchHistoryService
+    
+    session_id = SearchHistoryService.generate_session_id()
+    return {
+        "status": "success",
+        "session_id": session_id
+    }
+
 # ========== END SEARCH ENDPOINTS ==========
 
 

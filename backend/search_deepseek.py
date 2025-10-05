@@ -7,12 +7,42 @@ from typing import List, Optional, Union, Dict, Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func
+import time
+from functools import lru_cache
 
 from backend.database import get_db_session, PlanetaryFeature
 from backend.deepseek_service import parse_query_with_deepseek, generate_search_summary
 
 # Router for search endpoints
 router = APIRouter(prefix="/search", tags=["search"])
+
+# Simple in-memory cache for frequent queries
+_search_cache = {}
+_cache_max_size = 100
+
+def _get_cache_key(query: str, target_body: Optional[str] = None) -> str:
+    """Generate cache key for search query."""
+    return f"{query.lower()}:{target_body or 'all'}"
+
+def _get_cached_result(cache_key: str) -> Optional[Dict]:
+    """Get cached search result if available and not expired."""
+    if cache_key in _search_cache:
+        result, timestamp = _search_cache[cache_key]
+        # Cache for 5 minutes
+        if time.time() - timestamp < 300:
+            return result
+        else:
+            del _search_cache[cache_key]
+    return None
+
+def _cache_result(cache_key: str, result: Dict):
+    """Cache search result."""
+    # Simple cache eviction - remove oldest if full
+    if len(_search_cache) >= _cache_max_size:
+        oldest_key = min(_search_cache.keys(), key=lambda k: _search_cache[k][1])
+        del _search_cache[oldest_key]
+    
+    _search_cache[cache_key] = (result, time.time())
 
 
 # Request/Response Models
@@ -50,14 +80,22 @@ async def semantic_search(request: SearchRequest) -> SearchResponse:
     Fast AI-powered semantic search using DeepSeek API.
     
     Process:
-    1. Parse query with DeepSeek API (fast, intelligent)
-    2. Filter database by parsed criteria (body, category, size)
-    3. Rank by keyword relevance
-    4. Return top results
+    1. Check cache for recent similar queries
+    2. Parse query with DeepSeek API (fast, intelligent)
+    3. Filter database by parsed criteria (body, category, size)
+    4. Rank by keyword relevance
+    5. Return top results
     
-    Speed: 200-500ms (vs 5-10s for local models)
+    Speed: 50-500ms (vs 5-10s for local models)
     Cost: ~$0.00003 per query (essentially free)
     """
+    # Check cache first
+    cache_key = _get_cache_key(request.query, request.target_body)
+    cached_result = _get_cached_result(cache_key)
+    if cached_result:
+        print(f"Cache hit for query: {request.query}")
+        return SearchResponse(**cached_result)
+    
     session = get_db_session()
     
     try:
@@ -138,13 +176,18 @@ async def semantic_search(request: SearchRequest) -> SearchResponse:
                 print(f"Summary generation failed: {e}")
                 summary = f"Found {len(results)} matching features"
         
-        return SearchResponse(
+        response = SearchResponse(
             query=request.query,
             parsed_query=parsed_query,
             results=results,
             total_results=len(scored_features),
             summary=summary
         )
+        
+        # Cache the result for future requests
+        _cache_result(cache_key, response.dict())
+        
+        return response
         
     except Exception as e:
         print(f"Search error: {e}")
@@ -257,5 +300,83 @@ async def get_feature_detail(feature_id: int) -> FeatureResult:
             description=feature.description
         )
         
+    finally:
+        session.close()
+
+
+@router.post("/discover/recommendations")
+async def get_discovery_recommendations(
+    interests: List[str] = Query([], description="User interests"),
+    limit: int = Query(6, ge=1, le=20)
+):
+    """Get personalized feature recommendations using AI."""
+    from backend.deepseek_service import generate_discovery_recommendations
+    
+    session = get_db_session()
+    
+    try:
+        # Get available features
+        features = session.query(PlanetaryFeature).limit(200).all()
+        feature_data = []
+        
+        for f in features:
+            feature_data.append({
+                "name": f.feature_name,
+                "body": f.target_body,
+                "category": f.category,
+                "keywords": [f.target_body, f.category, f.feature_name],
+                "coordinates": {"lat": f.latitude, "lon": f.longitude}
+            })
+        
+        # Get AI recommendations
+        recommendations = await generate_discovery_recommendations(
+            interests, feature_data, limit
+        )
+        
+        return {
+            "recommendations": recommendations,
+            "total": len(recommendations)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Recommendation error: {str(e)}")
+    finally:
+        session.close()
+
+
+@router.get("/discover/insights/{feature_name}")
+async def get_feature_insights(feature_name: str):
+    """Get AI-generated insights about a specific feature."""
+    from backend.deepseek_service import generate_feature_insights
+    
+    session = get_db_session()
+    
+    try:
+        # Find the feature
+        feature = session.query(PlanetaryFeature).filter(
+            PlanetaryFeature.feature_name.ilike(f"%{feature_name}%")
+        ).first()
+        
+        if not feature:
+            raise HTTPException(status_code=404, detail="Feature not found")
+        
+        feature_data = {
+            "name": feature.feature_name,
+            "body": feature.target_body,
+            "category": feature.category,
+            "coordinates": {"lat": feature.latitude, "lon": feature.longitude},
+            "description": feature.description
+        }
+        
+        # Generate insights
+        insights = await generate_feature_insights(feature_data)
+        
+        return {
+            "feature": feature_data,
+            "insights": insights
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Insights error: {str(e)}")
     finally:
         session.close()

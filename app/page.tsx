@@ -1,91 +1,178 @@
 "use client";
 
-import { useRouter } from 'next/navigation';
-import GlassSearchBar from './components/search_bar';
+import { useSearchParams, useRouter } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
+import dynamic from "next/dynamic";
+import { useEffect, useRef, useState } from "react";
+import GlassSearchBar from "./components/search_bar";
+import SearchIndexInitializer from "./components/SearchIndexInitializer";
+
+// Dynamically import PhotoSphereGallery to avoid SSR issues with Three.js
+const PhotoSphereGallery = dynamic(
+  () => import("./components/PhotoSphereGallery"),
+  { ssr: false }
+);
 
 export default function Home() {
   const router = useRouter();
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const searchParams = useSearchParams();
+  const [searchQuery, setSearchQuery] = useState<string>("");
 
-  const handleGlobalSearch = (query: string) => {
-    // Navigate to the explorer page with the search query
-    router.push(`/explorer?search=${encodeURIComponent(query)}`);
+  useEffect(() => {
+    // Get the search query from URL params
+    const query = searchParams.get("search");
+    if (query) {
+      setSearchQuery(query);
+    }
+  }, [searchParams]);
+
+  const handleSearch = (query: string) => {
+    setSearchQuery(query);
+    
+    // For now, just update the search query - the PhotoSphere will handle the filtering
+    // In the future, we could add visual feedback here
+    console.log('[SEARCH] Instant search for:', query);
+    
+    // Optional: Show a brief search indicator
+    const searchIndicator = document.createElement('div');
+    searchIndicator.style.cssText = `
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: rgba(0, 0, 0, 0.8);
+      color: white;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 14px;
+      z-index: 1000;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    `;
+    searchIndicator.textContent = `Searching: ${query}`;
+    document.body.appendChild(searchIndicator);
+    
+    // Remove indicator after 2 seconds
+    setTimeout(() => {
+      if (document.body.contains(searchIndicator)) {
+        document.body.removeChild(searchIndicator);
+      }
+    }, 2000);
   };
 
-  const handleSurpriseClick = () => {
-    // Navigate to the surprise page
-    router.push('/surprise');
+  const handleExploreClick = () => {
+    // Navigate to the old homepage (now explorer)
+    router.push("/explorer");
   };
+
+  // Create animated starfield background
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    // Set canvas size
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    // Create stars
+    const stars: {
+      x: number;
+      y: number;
+      radius: number;
+      opacity: number;
+      speed: number;
+    }[] = [];
+    const numStars = 200;
+
+    for (let i = 0; i < numStars; i++) {
+      stars.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        radius: Math.random() * 1.5,
+        opacity: Math.random(),
+        speed: Math.random() * 0.05,
+      });
+    }
+
+    // Animation loop
+    function animate() {
+      if (!ctx || !canvas) return;
+
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Draw stars with twinkling effect
+      stars.forEach((star) => {
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 255, 255, ${star.opacity})`;
+        ctx.fill();
+
+        // Twinkling effect
+        star.opacity += star.speed;
+        if (star.opacity > 1 || star.opacity < 0.2) {
+          star.speed = -star.speed;
+        }
+      });
+
+      requestAnimationFrame(animate);
+    }
+
+    animate();
+
+    // Handle resize
+    const handleResize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-800 to-black flex flex-col">
-      {/* Hero Section with Glass Search Bar - Full Screen */}
-      <section className="relative flex flex-col items-center justify-center flex-1 px-4 sm:px-8">
-        {/* Background decoration */}
-        <div className="absolute inset-0 overflow-hidden">
-          <div className="absolute inset-0 bg-[url('/globe.svg')] bg-center bg-no-repeat opacity-5 pointer-events-none" />
-          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl" />
-          <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl" />
-        </div>
-        
-        {/* Main content */}
-        <div className="relative z-10 text-center mb-12 space-y-6">
-          <h1 className="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold text-white mb-6 tracking-tight">
-            Explore NASA&apos;s<br />Universe
-          </h1>
-          <p className="text-xl sm:text-2xl text-white/70 mb-12 max-w-3xl mx-auto leading-relaxed">
-            Navigate gigapixel images of celestial bodies, discover planetary features, 
-            and explore the cosmos like never before
-          </p>
-        </div>
+    <div className="fixed inset-0 w-full h-full overflow-hidden">
+      {/* Initialize search index on app startup */}
+      <SearchIndexInitializer />
+      
+      {/* Animated starfield background */}
+      <canvas
+        ref={canvasRef}
+        className="fixed inset-0 w-full h-full"
+        style={{ zIndex: 0 }}
+      />
 
-        {/* Glass Search Bar - Centered and Prominent */}
-        <div className="relative z-10 w-full max-w-4xl px-4 flex flex-col items-center">
-          <GlassSearchBar 
-            onSearch={handleGlobalSearch}
-            placeholder="Search for craters, mountains, coordinates (e.g., 'Sinus Lunicus', 'De Vico')..."
-          />
-          
-          {/* Search suggestions */}
-          <div className="mt-6 text-center">
-            <p className="text-sm text-white/40 mb-3">Popular searches:</p>
-            <div className="flex flex-wrap justify-center gap-2">
-              {['Marco Polo P', 'Bürg', 'Brown E', 'Short B'].map((term) => (
-                <button
-                  key={term}
-                  onClick={() => handleGlobalSearch(term)}
-                  className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white rounded-full text-sm transition-all border border-white/10 hover:border-white/20"
-                >
-                  {term}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+      {/* PhotoSphere Gallery - behind everything */}
+      <div className="absolute inset-0 w-full h-full" style={{ zIndex: 1 }}>
+        <PhotoSphereGallery showFooter={false} searchQuery={searchQuery} />
+      </div>
 
-        {/* Feature highlights */}
-        <div className="relative z-10 mt-16 grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto px-4">
-          <div className="text-center p-6 bg-white/5 backdrop-blur-sm rounded-xl border border-white/10">
-            <h3 className="text-white font-semibold mb-2">Multiple Planets</h3>
-            <p className="text-white/60 text-sm">Explore Moon, Mars, Mercury, and Ceres</p>
-          </div>
-          <button 
-            onClick={handleSurpriseClick}
-            className="text-center p-6 bg-white/5 backdrop-blur-sm rounded-xl border border-white/10 hover:bg-white/10 hover:border-white/20 transition-all cursor-pointer"
-          >
-            <h3 className="text-white font-semibold mb-2">Surprise me</h3>
-            <p className="text-white/60 text-sm">Coming soon</p>
-          </button>
-          <div className="text-center p-6 bg-white/5 backdrop-blur-sm rounded-xl border border-white/10">
-            <h3 className="text-white font-semibold mb-2">Feature Markers</h3>
-            <p className="text-white/60 text-sm">Mark and discover planetary landmarks</p>
-          </div>
-        </div>
-      </section>
+      {/* Explore More button */}
+      <button
+        onClick={handleExploreClick}
+        className="absolute top-8 right-8 z-30 flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-full transition-all border border-white/10 hover:border-white/20 backdrop-blur-sm"
+      >
+        <span>Explore More</span>
+      </button>
 
-      {/* Footer */}
-      <footer className="relative py-6 px-4 text-center border-t border-white/10">
-        <p className="text-white/40 text-sm">
-          Made by Slack Overflow
+      {/* Search bar centered in middle of page - above photosphere */}
+      <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-30 w-full max-w-2xl px-4">
+        <GlassSearchBar
+          onSearch={handleSearch}
+          value={searchQuery}
+          placeholder={"Search planetary features, locations, coordinates..."}
+        />
+      </div>
+
+      {/* Footer - fixed at bottom with proper z-index */}
+      <footer className="absolute bottom-0 left-0 right-0 z-30 py-6 px-4 text-center backdrop-blur-sm">
+        <p className="text-white/70 text-sm">
+          Made with love by Slack Overflow
         </p>
       </footer>
     </div>

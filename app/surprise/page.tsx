@@ -28,17 +28,78 @@ export default function SurprisePage() {
 
   const handleSearch = (query: string) => {
     setSearchQuery(query);
-    // Update URL with new search query
-    router.push(`/explorer?search=${encodeURIComponent(query)}`);
+    
+    // Create smooth transition effect
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, #1a1a2e, #16213e, #0f3460);
+      z-index: 9999;
+      opacity: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: opacity 0.3s ease-in-out;
+    `;
+
+    const content = document.createElement('div');
+    content.style.cssText = `
+      text-align: center;
+      color: white;
+    `;
+
+    const spinner = document.createElement('div');
+    spinner.style.cssText = `
+      width: 40px;
+      height: 40px;
+      border: 3px solid rgba(255, 255, 255, 0.3);
+      border-top: 3px solid white;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 20px;
+    `;
+
+    const text = document.createElement('p');
+    text.textContent = `Searching for "${query}"...`;
+    text.style.cssText = `
+      font-size: 1.2rem;
+      margin: 0;
+      opacity: 0.8;
+    `;
+
+    // Add CSS animation
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+    `;
+    document.head.appendChild(style);
+
+    content.appendChild(spinner);
+    content.appendChild(text);
+    overlay.appendChild(content);
+    document.body.appendChild(overlay);
+
+    // Trigger fade in
+    setTimeout(() => {
+      overlay.style.opacity = '1';
+    }, 10);
+
+    // Navigate after animation
+    setTimeout(() => {
+      router.push(`/explorer?search=${encodeURIComponent(query)}`);
+    }, 800);
   };
 
-  /*************  ✨ Windsurf Command ⭐  *************/
-  /**
-   * Navigates back to the home page
-   */
-  /*******  5e16d341-4f0a-4861-8fbe-418d8bc841bd  *******/
-  const handleBackToHome = () => {
-    router.push("/");
+  const handleExploreClick = () => {
+    // Navigate to explore page
+    router.push("/explore");
   };
 
   // Create animated starfield background
@@ -120,17 +181,21 @@ export default function SurprisePage() {
         style={{ zIndex: 0 }}
       />
 
-      {/* Back button */}
+      {/* PhotoSphere Gallery - behind everything */}
+      <div className="absolute inset-0 w-full h-full" style={{ zIndex: 1 }}>
+        <PhotoSphereGallery showFooter={false} />
+      </div>
+
+      {/* Explore More button */}
       <button
-        onClick={handleBackToHome}
-        className="absolute top-8 left-8 z-20 flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-full transition-all border border-white/10 hover:border-white/20 backdrop-blur-sm"
+        onClick={handleExploreClick}
+        className="absolute top-8 right-8 z-30 flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-full transition-all border border-white/10 hover:border-white/20 backdrop-blur-sm"
       >
-        <ArrowLeft size={20} />
-        <span>Back to Home</span>
+        <span>Explore More</span>
       </button>
 
-      {/* Search bar centered in middle of page */}
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 w-full max-w-2xl px-4">
+      {/* Search bar centered in middle of page - above photosphere */}
+      <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-30 w-full max-w-2xl px-4">
         <GlassSearchBar
           onSearch={handleSearch}
           value={searchQuery}
@@ -138,37 +203,10 @@ export default function SurprisePage() {
         />
       </div>
 
-      {/* PhotoSphere Gallery */}
-      <div className="absolute inset-0 w-full h-full" style={{ zIndex: 1 }}>
-        <PhotoSphereGallery />
-      </div>
-
-      {/* Content */}
-      <div className="relative z-10 flex flex-col items-center justify-center flex-1 px-4 sm:px-8">
-        {/* Back button */}
-        <button
-          onClick={handleBackToHome}
-          className="absolute top-8 left-8 flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-full transition-all border border-white/10 hover:border-white/20"
-        >
-          <ArrowLeft size={20} />
-          <span>Back to Home</span>
-        </button>
-
-        {/* Main content area - currently blank */}
-        <div className="text-center">
-          <h1 className="text-5xl sm:text-6xl font-bold text-white mb-6">
-            Surprise!
-          </h1>
-          <p className="text-xl text-white/70">
-            Coming soon...
-          </p>
-        </div>
-      </div>
-
-      {/* Footer */}
-      <footer className="relative py-6 px-4 text-center border-t border-white/10">
-        <p className="text-white/40 text-sm">
-          Made by Slack Overflow
+      {/* Footer - fixed at bottom with proper z-index */}
+      <footer className="absolute bottom-0 left-0 right-0 z-30 py-6 px-4 text-center backdrop-blur-sm">
+        <p className="text-white/70 text-sm">
+          Made with love by Slack Overflow
         </p>
       </footer>
     </div>
