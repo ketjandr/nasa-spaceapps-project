@@ -66,6 +66,63 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
     }
   }, [externalSearchQuery]);
 
+  // Load available datasets from backend on mount
+  useEffect(() => {
+    if (!backendBase) {
+      console.warn("NEXT_PUBLIC_BACKEND_URL not set; cannot load datasets");
+      return;
+    }
+    
+    async function loadDatasets() {
+      try {
+        const resp = await fetch(`${backendBase}/viewer/layers`);
+        if (!resp.ok) {
+          console.error("Failed to load datasets:", resp.status);
+          return;
+        }
+        const data = await resp.json();
+        setDatasets(data);
+        
+        // Auto-select first dataset if available
+        if (data.length > 0 && !selectedLayerId) {
+          setSelectedLayerId(data[0].id);
+        }
+      } catch (err) {
+        console.error("Error loading datasets:", err);
+      }
+    }
+    
+    loadDatasets();
+  }, [backendBase]);
+
+  // Load layer config when selected layer changes
+  useEffect(() => {
+    if (!selectedLayerId || !backendBase) {
+      setLayerConfig(null);
+      return;
+    }
+    
+    async function loadLayerConfig() {
+      try {
+        const resp = await fetch(`${backendBase}/viewer/layers/${selectedLayerId}`);
+        if (!resp.ok) {
+          console.error("Failed to load layer config:", resp.status);
+          return;
+        }
+        const config = await resp.json();
+        setLayerConfig(config);
+        
+        // Update selected body based on layer config
+        const body = (config.body || "unknown").toLowerCase() as BodyKey;
+        setSelectedBody(body);
+      } catch (err) {
+        console.error("Error loading layer config:", err);
+      }
+    }
+    
+    loadLayerConfig();
+  }, [selectedLayerId, backendBase]);
+
   // Auto-load features for Moon and Mars when selectedBody changes
   useEffect(() => {
     if (selectedBody === "moon") {
