@@ -40,7 +40,7 @@ export default function GlassSearchBar({
   return (
     <form
       onSubmit={handleSubmit}
-      className={`flex items-center w-full max-w-3xl bg-white/10 backdrop-blur-md rounded-full px-4 py-3 shadow-lg border border-white/20 hover:border-white/30 transition-all ${className}`}
+      className={`flex items-center w-full max-w-3xl bg-black/40 backdrop-blur-xl rounded-full px-4 py-3 shadow-lg border border-white/30 hover:border-white/40 transition-all ${className}`}
     >
       {/* Magnifying Glass Icon */}
       <Search className="text-white/70 w-5 h-5 mr-3 flex-shrink-0" />
