@@ -9,19 +9,13 @@ import TileViewerWrapper from '../components/tileViewWrapper';
 function ExplorerContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  
-  // Get initial values from URL params
-  const initialFilter = searchParams.get('filter');
-  const initialSearch = searchParams.get('search') || '';
-  
-  console.log('[Explorer] Component mounting/rendering - URL params:', { filter: initialFilter, search: initialSearch });
-  
-  // Initialize from URL params immediately to avoid flash of wrong content
-  const [searchQuery, setSearchQuery] = useState<string>(initialSearch);
-  // Initialize selectedBody from URL params immediately to avoid flash of wrong body
-  const [selectedBody, setSelectedBody] = useState<string | null>(initialFilter);
-
-  console.log('[Explorer RENDER] selectedBody:', selectedBody, 'searchQuery:', searchQuery);
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [navigationParams, setNavigationParams] = useState<{
+    body?: string;
+    lat?: number;
+    lon?: number;
+    zoom?: number;
+  }>({});
 
   useEffect(() => {
     // Get the search query and filter from URL params
@@ -41,6 +35,19 @@ function ExplorerContent() {
     } else {
       setSelectedBody(null); // Clear filter if not in URL
     }
+
+    // Get navigation parameters from PhotoSphereGallery
+    const body = searchParams.get('body');
+    const lat = searchParams.get('lat');
+    const lon = searchParams.get('lon');
+    const zoom = searchParams.get('zoom');
+
+    setNavigationParams({
+      body: body || undefined,
+      lat: lat ? parseFloat(lat) : undefined,
+      lon: lon ? parseFloat(lon) : undefined,
+      zoom: zoom ? parseInt(zoom) : undefined,
+    });
   }, [searchParams]);
 
   const handleSearch = (query: string) => {
@@ -132,7 +139,13 @@ function ExplorerContent() {
           
           {/* Tile viewer */}
           <div className="bg-gray-900/50 rounded-xl p-4 sm:p-6 backdrop-blur-sm border border-white/10 shadow-2xl">
-            <TileViewerWrapper searchQuery={searchQuery} selectedBody={selectedBody} />
+            <TileViewerWrapper 
+              searchQuery={searchQuery} 
+              initialBody={navigationParams.body}
+              initialLat={navigationParams.lat}
+              initialLon={navigationParams.lon}
+              initialZoom={navigationParams.zoom}
+            />
           </div>
 
           {/* Help section */}

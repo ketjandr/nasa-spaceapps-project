@@ -8,8 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from .config import DatasetConfig, load_datasets
-from .schemas import DatasetListItem, ViewerConfig
+from config import DatasetConfig, load_datasets
+from schemas import DatasetListItem, ViewerConfig
 
 app = FastAPI(title="StellarCanvas Tiles", version="0.2.0")
 
