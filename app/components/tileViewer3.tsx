@@ -2,109 +2,19 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import type OpenSeadragon from "openseadragon";
 import JSZip from "jszip";
-import { xml2json } from "xml-js"; // optional helper if you prefer parsing XML to JSON (not required)
-import toGeoJSON from "togeojson"; // note: togeojson exports DOM parsers; we'll use via DOMParser
-import type OpenSeadragon from "openseadragon";
-// (If togeojson import issues, you can also parse KML manually or use another KML->GeoJSON lib.)
-
-type BodyKey = "moon" | "mars" | "mercury" | "ceres";
-
-const TREK_TEMPLATES: Record<
-  BodyKey,
-  Array<{ 
-    id: string; 
-    title: string; 
-    template: string; 
-    example: string;
-    type?: 'base' | 'overlay' | 'temporal';
-    temporalRange?: { start: string; end: string; interval: string };
-  }>
-> = {
-  moon: [
-    {
-      id: "lro_wac",
-      title: "LRO WAC Mosaic (global 303ppd)",
-      type: "base",
-      template:
-        "https://trek.nasa.gov/tiles/Moon/EQ/LRO_WAC_Mosaic_Global_303ppd_v02/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
-      example:
-        "https://trek.nasa.gov/tiles/Moon/EQ/LRO_WAC_Mosaic_Global_303ppd_v02/1.0.0/default/default028mm/0/0/0.jpg",
-    },
-    {
-      id: "lro_lola",
-      title: "Moon LOLA Elevation",
-      type: "overlay",
-      template:
-        "https://trek.nasa.gov/tiles/Moon/EQ/LRO_LOLA_ClrShade_Global_128ppd_v04/1.0.0/default/default028mm/{z}/{row}/{col}.png",
-      example:
-        "https://trek.nasa.gov/tiles/Moon/EQ/LRO_LOLA_ClrShade_Global_128ppd_v04/1.0.0/default/default028mm/0/0/0.png",
-    },
-  ],
-  mars: [
-    {
-      id: "mars_mgs_mola",
-      title: "Mars MGS MOLA Elevation",
-      type: "base",
-      template:
-        "https://trek.nasa.gov/tiles/Mars/EQ/Mars_MGS_MOLA_ClrShade_merge_global_463m/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
-      example:
-        "https://trek.nasa.gov/tiles/Mars/EQ/Mars_MGS_MOLA_ClrShade_merge_global_463m/1.0.0/default/default028mm/0/0/0.jpg",
-    },
-    {
-      id: "mars_hirise",
-      title: "Mars HiRISE Imagery",
-      type: "overlay",
-      template:
-        "https://trek.nasa.gov/tiles/Mars/EQ/Mars_HiRISE_Mosaic_Global_256ppd/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
-      example:
-        "https://trek.nasa.gov/tiles/Mars/EQ/Mars_HiRISE_Mosaic_Global_256ppd/1.0.0/default/default028mm/0/0/0.jpg",
-    },
-    {
-      id: "mars_weather",
-      title: "Mars Daily Weather Maps",
-      type: "temporal",
-      template:
-        "https://trek.nasa.gov/tiles/Mars/EQ/Mars_MRO_MARCI_Weather_{date}/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
-      example:
-        "https://trek.nasa.gov/tiles/Mars/EQ/Mars_MRO_MARCI_Weather_20230101/1.0.0/default/default028mm/0/0/0.jpg",
-      temporalRange: {
-        start: "2023-01-01",
-        end: "2023-12-31",
-        interval: "P1D" // ISO 8601 duration - 1 day
-      }
-    },
-  ],
-  mercury: [
-    {
-      id: "messenger_mdis",
-      title: "Mercury MESSENGER MDIS basemap",
-      template:
-        "https://trek.nasa.gov/tiles/Mercury/EQ/Mercury_MESSENGER_MDIS_Basemap_EnhancedColor_Mosaic_Global_665m/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
-      example:
-        "https://trek.nasa.gov/tiles/Mercury/EQ/Mercury_MESSENGER_MDIS_Basemap_EnhancedColor_Mosaic_Global_665m/1.0.0/default/default028mm/0/0/0.jpg",
-    },
-  ],
-  ceres: [
-    {
-      id: "ceres_dawn",
-      title: "Ceres Dawn FC HAMO (example)",
-      template:
-        "https://trek.nasa.gov/tiles/Ceres/EQ/Ceres_Dawn_FC_HAMO_ClrShade_DLR_Global_60ppd_Oct2016/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
-      example:
-        "https://trek.nasa.gov/tiles/Ceres/EQ/Ceres_Dawn_FC_HAMO_ClrShade_DLR_Global_60ppd_Oct2016/1.0.0/default/default028mm/0/0/0.jpg",
-    },
-  ],
+// @ts-ignore - togeojson doesn't have types
 import toGeoJSON from "togeojson";
 import type { FeatureCollection, Point } from "geojson";
 
 type BodyKey =
+  | "earth"
   | "milky_way"
   | "moon"
   | "mars"
   | "mercury"
   | "ceres"
+  | "vesta"
   | "unknown";
 
 type DatasetListItem = {
@@ -125,9 +35,6 @@ type ViewerConfigResponse = {
   body?: string | null;
 };
 
-const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "";
-const backendBase = backendUrl ? backendUrl.replace(/\/$/, "") : "";
-
 type PlanetFeature = {
   name: string;
   lat: number;
@@ -135,165 +42,528 @@ type PlanetFeature = {
   diamkm?: number;
 };
 
+// --- local TREK templates (fallback / examples) ----------------------
+type TemporalRange = {
+  start: string;
+  end: string;
+  interval: string; // ISO 8601 duration (P1D = daily, P1M = monthly)
+  format: string;   // date format for URL substitution
+};
+
+const TREK_TEMPLATES: Record<
+  BodyKey,
+  Array<{ id: string; title: string; template: string; example?: string; type?: "base" | "overlay" | "temporal"; temporalRange?: TemporalRange }>
+> = {
+  // Earth layers - NASA and reliable sources
+  earth: [
+    {
+      id: "openstreetmap",
+      title: "OpenStreetMap",
+      template: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      type: "base"
+    },
+    {
+      id: "satellite_arcgis",
+      title: "ArcGIS World Imagery",
+      template: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      type: "base"
+    },
+    {
+      id: "modis_terra_temporal",
+      title: "MODIS Terra True Color (temporal)",
+      template: "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/{date}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg",
+      type: "temporal",
+      temporalRange: {
+        start: "2000-02-24",
+        end: new Date().toISOString().split('T')[0],
+        interval: "P1D",
+        format: "YYYY-MM-DD"
+      }
+    },
+    {
+      id: "modis_aqua_temporal", 
+      title: "MODIS Aqua True Color (temporal)",
+      template: "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Aqua_CorrectedReflectance_TrueColor/default/{date}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg",
+      type: "temporal",
+      temporalRange: {
+        start: "2002-07-04",
+        end: new Date().toISOString().split('T')[0],
+        interval: "P1D",
+        format: "YYYY-MM-DD"
+      }
+    },
+    {
+      id: "terrain_arcgis",
+      title: "ArcGIS Terrain",
+      template: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}",
+      type: "base"
+    }
+  ],
+  moon: [
+    {
+      id: "lro_wac_global",
+      title: "LRO WAC Global Mosaic",
+      template: "https://trek.nasa.gov/tiles/Moon/EQ/LRO_WAC_Mosaic_Global_303ppd_v02/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+      type: "base",
+    },
+    {
+      id: "lro_nac_apollo",
+      title: "LRO NAC Apollo Landing Sites",
+      template: "https://trek.nasa.gov/tiles/Moon/EQ/LRO_NAC_ApolloLandingSites_100cm/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+      type: "base",
+    },
+    {
+      id: "lro_lola_elevation",
+      title: "LRO LOLA Colorized Elevation",
+      template: "https://trek.nasa.gov/tiles/Moon/EQ/LRO_LOLA_ClrShade_Global_128ppd_v04/1.0.0/default/default028mm/{z}/{row}/{col}.png",
+      type: "overlay",
+    },
+    {
+      id: "lro_diviner_rock",
+      title: "LRO Diviner Rock Abundance",
+      template: "https://trek.nasa.gov/tiles/Moon/EQ/LRO_Diviner_Derived_RockAbundance_Global_128ppd_v01/1.0.0/default/default028mm/{z}/{row}/{col}.png",
+      type: "overlay",
+    },
+    {
+      id: "grail_gravity",
+      title: "GRAIL Gravity Field",
+      template: "https://trek.nasa.gov/tiles/Moon/EQ/GRAIL_LGRS_Freair_Gravity_Global_128ppd_v03/1.0.0/default/default028mm/{z}/{row}/{col}.png",
+      type: "overlay",
+    },
+  ],
+  mars: [
+    {
+      id: "mars_mgs_mola",
+      title: "Mars MGS MOLA Colorized Shaded Relief",
+      template: "https://trek.nasa.gov/tiles/Mars/EQ/Mars_MGS_MOLA_ClrShade_merge_global_463m/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+      type: "base",
+    },
+    {
+      id: "mars_viking_mosaic",
+      title: "Mars Viking MDIM 2.1 Global Mosaic",
+      template: "https://trek.nasa.gov/tiles/Mars/EQ/Mars_Viking_MDIM21_ClrMosaic_global_232m/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+      type: "base",
+    },
+    {
+      id: "mars_hirise",
+      title: "Mars HiRISE High Resolution Imagery",
+      template: "https://trek.nasa.gov/tiles/Mars/EQ/Mars_HiRISE_Mosaic_Global_256ppd/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+      type: "overlay",
+    },
+    {
+      id: "mars_ctx_mosaic",
+      title: "Mars CTX Global Mosaic",
+      template: "https://trek.nasa.gov/tiles/Mars/EQ/Mars_MRO_CTX_mosaic_beta01_200ppd/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+      type: "overlay",
+    },
+    {
+      id: "mars_thermal_inertia",
+      title: "Mars TES Thermal Inertia",
+      template: "https://trek.nasa.gov/tiles/Mars/EQ/Mars_MGS_TES_ThermalInertia_mosaic_global_32ppd_v02/1.0.0/default/default028mm/{z}/{row}/{col}.png",
+      type: "overlay",
+    },
+  ],
+  mercury: [
+    {
+      id: "messenger_mdis_basemap",
+      title: "MESSENGER MDIS Basemap",
+      template: "https://trek.nasa.gov/tiles/Mercury/EQ/Mercury_MESSENGER_MDIS_Basemap_EnhancedColor_Mosaic_Global_665m/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+      type: "base",
+    },
+    {
+      id: "messenger_global_mosaic",
+      title: "MESSENGER Global Mosaic",
+      template: "https://trek.nasa.gov/tiles/Mercury/EQ/MESSENGER_MDIS_Mosaic_Global_166m_v02/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+      type: "base",
+    },
+    {
+      id: "messenger_bdr",
+      title: "MESSENGER BDR Mosaic",
+      template: "https://trek.nasa.gov/tiles/Mercury/EQ/MESSENGER_MDIS_BDR_Mosaic_Global_166m_v01/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+      type: "base",
+    },
+    {
+      id: "messenger_elevation",
+      title: "MLA Elevation Model",
+      template: "https://trek.nasa.gov/tiles/Mercury/EQ/MESSENGER_MLA_DEM_Global_665m_v01/1.0.0/default/default028mm/{z}/{row}/{col}.png",
+      type: "overlay",
+    },
+    {
+      id: "messenger_slope",
+      title: "MLA Slope Map",
+      template: "https://trek.nasa.gov/tiles/Mercury/EQ/MESSENGER_MLA_Slopes_Global_665m_v01/1.0.0/default/default028mm/{z}/{row}/{col}.png",
+      type: "overlay",
+    },
+  ],
+  ceres: [
+    {
+      id: "ceres_dawn_hamo",
+      title: "Ceres Dawn FC HAMO",
+      template: "https://trek.nasa.gov/tiles/Ceres/EQ/Ceres_Dawn_FC_HAMO_ClrShade_DLR_Global_60ppd_Oct2016/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+      type: "base",
+    },
+    {
+      id: "ceres_dawn_lamo",
+      title: "Ceres Dawn FC LAMO",
+      template: "https://trek.nasa.gov/tiles/Ceres/EQ/Ceres_Dawn_FC_LAMO_ClrShade_DLR_Global_60ppd_Oct2016/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+      type: "base",
+    },
+    {
+      id: "ceres_elevation",
+      title: "Ceres Dawn Elevation Model",
+      template: "https://trek.nasa.gov/tiles/Ceres/EQ/Ceres_Dawn_HAMO_DEM_DLR_Global_60ppd_Oct2016/1.0.0/default/default028mm/{z}/{row}/{col}.png",
+      type: "overlay",
+    },
+    {
+      id: "ceres_gravity",
+      title: "Ceres Gravity Field",
+      template: "https://trek.nasa.gov/tiles/Ceres/EQ/Ceres_Dawn_Gravity_Global_665m_v01/1.0.0/default/default028mm/{z}/{row}/{col}.png",
+      type: "overlay",
+    },
+  ],
+  vesta: [
+    {
+      id: "vesta_dawn_hamo",
+      title: "Vesta Dawn FC HAMO",
+      template: "https://trek.nasa.gov/tiles/Vesta/EQ/Vesta_Dawn_FC_HAMO_ClrShade_DLR_Global_60ppd_Oct2016/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+      type: "base",
+    },
+    {
+      id: "vesta_dawn_lamo",
+      title: "Vesta Dawn FC LAMO",
+      template: "https://trek.nasa.gov/tiles/Vesta/EQ/Vesta_Dawn_FC_LAMO_ClrShade_DLR_Global_60ppd_Oct2016/1.0.0/default/default028mm/{z}/{row}/{col}.jpg",
+      type: "base",
+    },
+    {
+      id: "vesta_elevation",
+      title: "Vesta Dawn Elevation Model",
+      template: "https://trek.nasa.gov/tiles/Vesta/EQ/Vesta_Dawn_HAMO_DEM_DLR_Global_60ppd_Oct2016/1.0.0/default/default028mm/{z}/{row}/{col}.png",
+      type: "overlay",
+    },
+  ],
+  milky_way: [],
+  unknown: [],
+};
+
+// backend config
+const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "";
+const backendBase = backendUrl ? backendUrl.replace(/\/$/, "") : "";
+
+// --- component -------------------------------------------------------
 interface TileViewerProps {
   externalSearchQuery?: string;
+  onSearchChange?: (search: string) => void;
+  initialBody?: string;
+  initialLat?: number;
+  initialLon?: number;
+  initialZoom?: number;
 }
 
-export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
+export default function TileViewer({ 
+  externalSearchQuery, 
+  onSearchChange,
+  initialBody,
+  initialLat,
+  initialLon,
+  initialZoom 
+}: TileViewerProps) {
+  // refs and viewer instances
   const viewerRef = useRef<HTMLDivElement | null>(null);
   const compareViewerRef = useRef<HTMLDivElement | null>(null);
-  const [viewerObj, setViewerObj] = useState<OpenSeadragon.Viewer | null>(null);
-  const [compareViewerObj, setCompareViewerObj] = useState<any>(null);
+  const viewerObjRef = useRef<any | null>(null);
+  const compareViewerObjRef = useRef<any | null>(null);
+  // Track whether external body has been synced at least once
+  // If we have an external body prop at mount, consider it already synced
+  const hasExternalBodySynced = useRef<boolean>(externalSelectedBody !== undefined);
+
+  // state
+  const [isClient, setIsClient] = useState(false);
   const [datasets, setDatasets] = useState<DatasetListItem[]>([]);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
-  const [layerConfig, setLayerConfig] = useState<ViewerConfigResponse | null>(
-    null
-  );
+  const [layerConfig, setLayerConfig] = useState<ViewerConfigResponse | null>(null);
+  const [selectedBody, setSelectedBody] = useState<BodyKey>(
+    externalSelectedBody ? (externalSelectedBody as BodyKey) : "moon"
+  ); // Initialize from prop or default to moon
   const [selectedOverlayId, setSelectedOverlayId] = useState<string>("");
-  const [overlayOpacity, setOverlayOpacity] = useState(0.5);
+  const [overlayOpacity, setOverlayOpacity] = useState<number>(0.5);
   const [viewMode, setViewMode] = useState<"single" | "split" | "overlay">("single");
   const [selectedDate, setSelectedDate] = useState<string>("");
-  const [selectedBody, setSelectedBody] = useState<BodyKey>("unknown");
+  const [compareDate, setCompareDate] = useState<string>(""); // For temporal comparison
+  const [temporalMode, setTemporalMode] = useState<"single" | "compare" | "animation">("single");
   const [features, setFeatures] = useState<PlanetFeature[]>([]);
-  const [searchText, setSearchText] = useState("");
+  const [searchText, setSearchText] = useState<string>(externalSearchQuery ?? "");
 
-  // Update internal search text when external search query changes
+  console.log('[TileViewer3 RENDER] externalSelectedBody:', externalSelectedBody, 'selectedBody:', selectedBody, 'selectedLayerId:', selectedLayerId, 'hasExternalBodySynced:', hasExternalBodySynced.current);
+
+  // sync external search - including empty string to clear search
   useEffect(() => {
-    if (externalSearchQuery) {
+    if (externalSearchQuery !== undefined) {
       setSearchText(externalSearchQuery);
     }
   }, [externalSearchQuery]);
 
-  // Load available datasets from backend on mount
+  // Auto-search for planetary features when search text changes
   useEffect(() => {
-    if (!backendBase) {
-      console.warn("NEXT_PUBLIC_BACKEND_URL not set; cannot load datasets");
+    if (searchText.trim() && searchText.length > 2) {
+      const debounceTimer = setTimeout(() => {
+        switch (selectedBody) {
+          case "earth":
+            searchEarthLocations(searchText.trim());
+            break;
+          case "moon":
+            loadMoonGazetteer();
+            break;
+          case "mars":
+            queryMarsCraterDB();
+            break;
+          case "mercury":
+            loadMercuryGazetteer();
+            break;
+          case "ceres":
+            loadCeresGazetteer();
+            break;
+          case "vesta":
+            loadVestaGazetteer();
+            break;
+        }
+      }, 500); // 500ms debounce
+      
+      return () => clearTimeout(debounceTimer);
+    }
+  }, [searchText, selectedBody]);
+
+  // client-side detection to prevent hydration mismatch
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
+
+  // Handle initial navigation parameters from PhotoSphereGallery
+  useEffect(() => {
+    if (initialBody) {
+      setSelectedBody(initialBody as BodyKey);
+    }
+  }, [initialBody]);
+
+  // Clear selected layer when body changes and auto-select first available
+  useEffect(() => {
+    if (datasets.length > 0) {
+      const currentBodyLayers = datasets.filter(d => d.body === selectedBody);
+      if (currentBodyLayers.length > 0) {
+        // If current layer is not for the selected body, clear it and select first available
+        const currentLayer = datasets.find(d => d.id === selectedLayerId);
+        if (!currentLayer || currentLayer.body !== selectedBody) {
+          setSelectedLayerId(currentBodyLayers[0].id);
+          setSelectedOverlayId("");
+        }
+      } else {
+        // No layers for this body, clear selections
+        setSelectedLayerId("");
+        setSelectedOverlayId("");
+      }
+    }
+  }, [selectedBody, datasets, selectedLayerId]);
+
+  // load datasets list from backend if configured (optional)
+  useEffect(() => {
+    // Use TREK_TEMPLATES as primary source (fallback to backend if needed)
+    if (true) { // Always use local templates for now
+      // no backend configured — fallback to TREK_TEMPLATES as dataset list
+      const fallback: DatasetListItem[] = [];
+      (Object.keys(TREK_TEMPLATES) as BodyKey[]).forEach((body) => {
+        TREK_TEMPLATES[body].forEach((d) => {
+          fallback.push({ id: `${body}:${d.id}`, title: `${d.title}`, body });
+        });
+      });
+      setDatasets(fallback);
+      // Auto-select first layer for current body if none selected
+      const currentBodyLayers = fallback.filter(d => d.body === selectedBody);
+      if (currentBodyLayers.length > 0 && !selectedLayerId) {
+        console.log(`Auto-selecting layer for ${selectedBody}:`, currentBodyLayers[0].id);
+        setSelectedLayerId(currentBodyLayers[0].id);
+      } else if (currentBodyLayers.length === 0) {
+        console.warn(`No layers available for body: ${selectedBody}`);
+        // If current body has no layers, fallback to first available body
+        const anyLayers = fallback.filter(d => d.body && d.body !== selectedBody);
+        if (anyLayers.length > 0) {
+          console.log(`Falling back to first available body: ${anyLayers[0].body}`);
+          setSelectedBody(anyLayers[0].body as BodyKey);
+        }
+      }
       return;
     }
-    
-    async function loadDatasets() {
+
+    let mounted = true;
+    (async function load() {
       try {
         const resp = await fetch(`${backendBase}/viewer/layers`);
+        if (!mounted) return;
         if (!resp.ok) {
-          console.error("Failed to load datasets:", resp.status);
+          console.warn("Failed to load datasets from backend:", resp.status);
           return;
         }
         const data = await resp.json();
         setDatasets(data);
-        
-        // Auto-select first dataset if available
-        if (data.length > 0 && !selectedLayerId) {
-          setSelectedLayerId(data[0].id);
-        }
+        // Don't auto-select first dataset - let the selectedBody useEffect handle it
+        // if (data.length > 0 && !selectedLayerId) setSelectedLayerId(data[0].id);
       } catch (err) {
         console.error("Error loading datasets:", err);
       }
-    }
-    
-    loadDatasets();
-  }, [backendBase]);
+    })();
 
-  // Load layer config when selected layer changes
+    return () => { mounted = false; };
+  }, [backendBase, selectedLayerId, selectedBody]);
+
+  // Load layer config (either from backend or from local TREK_TEMPLATES)
   useEffect(() => {
-    if (!selectedLayerId || !backendBase) {
+    console.log('[TileViewer3] Layer config loading - selectedLayerId:', selectedLayerId);
+    let mounted = true;
+    if (!selectedLayerId) {
+      console.log('[TileViewer3] No selectedLayerId - clearing layer config');
       setLayerConfig(null);
       return;
     }
-    
-    async function loadLayerConfig() {
-      try {
-        const resp = await fetch(`${backendBase}/viewer/layers/${selectedLayerId}`);
-        if (!resp.ok) {
-          console.error("Failed to load layer config:", resp.status);
+
+    (async () => {
+      // If backend configured and selectedLayerId appears to be backend id, fetch it
+      if (backendBase && !selectedLayerId.includes(":")) {
+        try {
+          const resp = await fetch(`${backendBase}/viewer/layers/${selectedLayerId}`);
+          if (!mounted) return;
+          if (!resp.ok) {
+            console.warn("Failed to load layer config:", resp.status);
+            setLayerConfig(null);
+            return;
+          }
+          const cfg = await resp.json();
+          setLayerConfig(cfg);
+          // Don't override selectedBody from config - it's controlled externally
+          // const body = (cfg.body || "unknown").toLowerCase() as BodyKey;
+          // setSelectedBody(body);
+          return;
+        } catch (err) {
+          console.error("Error loading layer config from backend:", err);
+        }
+      }
+
+      // fallback: parse our TREK_TEMPLATES selection string `body:id` or id
+      const [maybeBody, maybeId] = selectedLayerId.split(":");
+      let foundTemplate;
+      if (maybeId) {
+        const bodyKey = (maybeBody as BodyKey) || "unknown";
+        foundTemplate = TREK_TEMPLATES[bodyKey]?.find((t) => t.id === maybeId);
+        if (foundTemplate) {
+          console.log('[TileViewer3] Found TREK template:', selectedLayerId, 'for body:', bodyKey);
+          // build a minimal layerConfig from template
+          let tileTemplate = foundTemplate.template;
+          
+          // Handle temporal templates with date substitution
+          if (foundTemplate.type === "temporal" && selectedDate) {
+            const formattedDate = formatDateForTemplate(selectedDate, foundTemplate);
+            tileTemplate = tileTemplate.replace(/{date}/g, formattedDate);
+          }
+          
+          const cfg: ViewerConfigResponse = {
+            id: selectedLayerId,
+            title: foundTemplate.title,
+            tile_url_template: tileTemplate,
+            min_zoom: 0,
+            max_zoom: 8,
+            tile_size: 256,
+            body: maybeBody,
+          };
+          if (!mounted) return;
+          console.log('[TileViewer3] Setting layer config:', cfg.id, cfg.title);
+          setLayerConfig(cfg);
+          // Don't override selectedBody from config - it's controlled externally
+          // setSelectedBody(maybeBody as BodyKey);
           return;
         }
-        const config = await resp.json();
-        setLayerConfig(config);
-        
-        // Update selected body based on layer config
-        const body = (config.body || "unknown").toLowerCase() as BodyKey;
-        setSelectedBody(body);
-      } catch (err) {
-        console.error("Error loading layer config:", err);
+      } else {
+        // maybe selectedLayerId is just template id (search all bodies)
+        for (const body of Object.keys(TREK_TEMPLATES) as BodyKey[]) {
+          const t = TREK_TEMPLATES[body].find((x) => x.id === selectedLayerId);
+          if (t) {
+            foundTemplate = t;
+            // Handle temporal templates with date substitution
+            let tileTemplate = t.template;
+            if (t.type === "temporal" && selectedDate) {
+              const formattedDate = formatDateForTemplate(selectedDate, t);
+              tileTemplate = tileTemplate.replace(/{date}/g, formattedDate);
+            }
+            
+            const cfg: ViewerConfigResponse = {
+              id: selectedLayerId,
+              title: t.title,
+              tile_url_template: tileTemplate,
+              min_zoom: 0,
+              max_zoom: 8,
+              tile_size: 256,
+              body,
+            };
+            if (!mounted) return;
+            console.log(`Setting template layerConfig for ${selectedLayerId}:`, cfg);
+            setLayerConfig(cfg);
+            // Don't override selectedBody from config - it's controlled externally
+            // setSelectedBody(body);
+            return;
+          }
+        }
       }
-    }
-    
-    loadLayerConfig();
-  }, [selectedLayerId, backendBase]);
 
-  // Auto-load features for Moon and Mars when selectedBody changes
+      // If nothing found, clear
+      if (!mounted) setLayerConfig(null);
+    })();
+
+    return () => { mounted = false; };
+  }, [selectedLayerId, selectedDate]);
+
+  // When selectedBody changes, auto-load features (Moon Gazetteer or Mars Robbins)
   useEffect(() => {
+    console.log('[TileViewer3] Feature loading - selectedBody:', selectedBody);
+    // Clear features immediately to avoid showing wrong body's features
+    setFeatures([]);
+    
     if (selectedBody === "moon") {
+      console.log('[TileViewer3] Loading Moon features...');
       loadMoonGazetteer();
     } else if (selectedBody === "mars") {
+      console.log('[TileViewer3] Loading Mars features...');
       queryMarsCraterDB();
     } else {
-      setFeatures([]);
+      console.log('[TileViewer3] No features for body:', selectedBody);
+      // Features already cleared above
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBody]);
 
-  // Create OpenSeadragon viewer with specified options
-  const createViewer = async (
-    elementRef: React.RefObject<HTMLDivElement | null>,
-    template: typeof TREK_TEMPLATES[BodyKey][0],
-    osd: any
-  ) => {
-    if (!elementRef.current) return null;
-
-    // Wait for the element to be properly mounted
-    await new Promise(resolve => setTimeout(resolve, 0));
-
-    const maxLevel = 8;
-    const tileSize = 256;
-    const width = tileSize * Math.pow(2, maxLevel + 1);
-    const height = tileSize * Math.pow(2, maxLevel);
-  // Keep openseadragon import in effect (client-only)
+  // Keep openseadragon import in effect (client-only) - ONLY for backend-sourced configs
   useEffect(() => {
+    console.log('[TileViewer3] OpenSeadragon viewer effect - layerConfig:', layerConfig?.id, layerConfig?.title);
     let viewer: OpenSeadragon.Viewer | null = null;
     let osd: typeof import("openseadragon") | null = null;
     let mounted = true;
 
     (async () => {
-      if (!layerConfig) return;
+      if (!layerConfig) {
+        console.log('[TileViewer3] No layerConfig - skipping viewer creation');
+        return;
+      }
+      console.log('[TileViewer3] Creating OpenSeadragon viewer for:', layerConfig.id);
       const OSDModule = await import("openseadragon");
       osd = (OSDModule.default ?? OSDModule) as typeof import("openseadragon");
       if (!viewerRef.current || !mounted) return;
+      
+      // Clear any existing content to prevent conflicts
+      viewerRef.current.innerHTML = "";
 
       // Set maxLevel and tileSize for the tiling scheme
       const minZoom = layerConfig.min_zoom;
       const maxLevel = layerConfig.max_zoom - layerConfig.min_zoom;
       const tileSize = layerConfig.tile_size;
-      // At maxLevel, columns = 2^(maxLevel+1), rows = 2^maxLevel
-      const width = tileSize * Math.pow(2, maxLevel + 1);
+      // For standard web map tiles, both width and height use 2^maxLevel
+      const width = tileSize * Math.pow(2, maxLevel);
       const height = tileSize * Math.pow(2, maxLevel);
 
-    const tileSource = {
-      width,
-      height,
-      tileSize,
-      minLevel: 0,
-      maxLevel,
-      getTileUrl: function (level: number, x: number, y: number) {
-        const maxCols = Math.pow(2, level + 1);
-        const maxRows = Math.pow(2, level);
-        // Ensure proper wrapping for both base and overlay layers
-        x = ((x % maxCols) + maxCols) % maxCols;
-        if (y < 0 || y >= maxRows) return null;
-        
-        let url = template.template;
-        if (template.type === 'temporal' && selectedDate) {
-          url = url.replace('{date}', selectedDate.replace(/-/g, ''));
-        }
-        
-        // Ensure x coordinate is properly wrapped for infinite scrolling
-        const wrappedX = x % maxCols;
-        return url
-          .replace("{z}", String(level))
-          .replace("{row}", String(y))
-          .replace("{col}", String(wrappedX));
-      },
-    };
       const tileSource: OpenSeadragon.TileSourceOptions = {
         width,
         height,
@@ -301,14 +571,13 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
         minLevel: 0,
         maxLevel,
         getTileUrl: function (level: number, x: number, y: number) {
-          const maxCols = Math.pow(2, level + 1);
-          const maxRows = Math.pow(2, level);
+          const maxTiles = Math.pow(2, level);
 
           // Handle horizontal wrapping
-          x = ((x % maxCols) + maxCols) % maxCols;
+          x = ((x % maxTiles) + maxTiles) % maxTiles;
 
           // Constrain vertical position
-          if (y < 0 || y >= maxRows) return null;
+          if (y < 0 || y >= maxTiles) return "";
 
           const z = level + minZoom;
           return layerConfig.tile_url_template
@@ -320,228 +589,376 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
         },
       };
 
-    const viewer = new osd({
-      element: elementRef.current,
-      prefixUrl: "https://cdn.jsdelivr.net/npm/openseadragon@latest/build/openseadragon/images/",
-      showNavigator: true,
-      navigatorSizeRatio: 0.15,
-      tileSources: [tileSource],
-      gestureSettingsMouse: { clickToZoom: false },
-      constrainDuringPan: true,
-      homeFillsViewer: true,
-      visibilityRatio: 0.5,
-      minZoomImageRatio: 0.8,
-      maxZoomPixelRatio: 2.0,
-      defaultZoomLevel: 1,
-      wrapHorizontal: true,
-      wrapVertical: false,
-      viewportConstraint: new osd.Rect(0, -0.1, 1, 1.2),
-      immediateRender: true,
-      preserveImageSizeOnResize: true,
-      // Prevent animation during sync to avoid feedback loops
-      animationTime: 0,
-      springStiffness: 5,
-      maxImageCacheCount: 200
-    });
+      viewer = new osd.Viewer({
+        element: viewerRef.current,
+        prefixUrl: "https://cdn.jsdelivr.net/npm/openseadragon@latest/build/openseadragon/images/",
+        showNavigator: true,
+        navigatorSizeRatio: 0.15,
+        tileSources: [tileSource as any],
+        gestureSettingsMouse: { clickToZoom: false },
+        constrainDuringPan: true,
+        homeFillsViewer: true,
+        visibilityRatio: 0.5,
+        minZoomImageRatio: 0.8,
+        maxZoomPixelRatio: 2.0,
+        defaultZoomLevel: 1,
+        wrapHorizontal: true,
+        wrapVertical: false,
+        immediateRender: true,
+        preserveImageSizeOnResize: true,
+        animationTime: 0,
+        springStiffness: 5,
+        maxImageCacheCount: 200
+      });
 
-      viewer.addHandler('open', function() {
-        addOverlays(viewer);
-      });    return viewer;
-  };
+      console.log('[TileViewer3] OpenSeadragon viewer created successfully with tile source');
+      viewerObjRef.current = viewer;
+    })();
 
+    return () => {
+      console.log('[TileViewer3] OpenSeadragon viewer cleanup - destroying viewer');
+      mounted = false;
+      if (viewer) {
+        // Clear all overlays before destroying
+        try {
+          viewer.clearOverlays();
+        } catch (e) {
+          console.warn("Could not clear overlays during cleanup:", e);
+        }
+        viewer.destroy();
+      }
+    };
+  }, [layerConfig]);
+
+  // Handle initial navigation to coordinates from PhotoSphereGallery
+  useEffect(() => {
+    if (initialLat !== undefined && initialLon !== undefined && viewerObjRef.current) {
+      const viewer = viewerObjRef.current;
+      
+      // Wait a bit for viewer to be fully initialized
+      setTimeout(() => {
+        try {
+          // For OpenSeadragon viewers, we need to convert lat/lon to image coordinates
+          // This is a simplified conversion - for more accuracy, we'd need the specific projection
+          const normalizedX = (initialLon + 180) / 360; // Convert -180/180 to 0/1
+          const normalizedY = (90 - initialLat) / 180; // Convert -90/90 to 0/1 (flipped for image coordinates)
+          
+          const imageRect = viewer.world.getItemAt(0).getBounds();
+          const targetX = imageRect.x + (normalizedX * imageRect.width);
+          const targetY = imageRect.y + (normalizedY * imageRect.height);
+          
+          const targetPoint = new viewer.Point(targetX, targetY);
+          const targetZoom = initialZoom ? Math.max(0, initialZoom - 5) : 2; // Convert tile zoom to viewer zoom
+          
+          viewer.viewport.panTo(targetPoint);
+          viewer.viewport.zoomTo(targetZoom);
+        } catch (error) {
+          console.warn("Could not navigate to initial coordinates:", error);
+        }
+      }, 1000);
+    }
+  }, [initialLat, initialLon, initialZoom, layerConfig]);
+
+  // Split/overlay viewer functionality
   // Initialize and sync viewers
   useEffect(() => {
     let mounted = true;
+    let osdModule: any = null;
     let mainViewer: any = null;
     let compareViewer: any = null;
 
-    // Cleanup function to destroy viewers
-    let cleanup = () => {
-      if (mainViewer) {
-        mainViewer.destroy();
-        mainViewer = null;
+    const cleanup = () => {
+      try {
+        if (mainViewer) { mainViewer.destroy(); mainViewer = null; }
+      } catch (e) { // ignore
       }
-      if (compareViewer) {
-        compareViewer.destroy();
-        compareViewer = null;
+      try {
+        if (compareViewer) { compareViewer.destroy(); compareViewer = null; }
+      } catch (e) { // ignore
       }
-    };
-
-    // Debounce function to limit the rate of updates
-    const debounce = (func: Function, wait: number) => {
-      let timeout: NodeJS.Timeout;
-      return function executedFunction(...args: any[]) {
-        const later = () => {
-          clearTimeout(timeout);
-          func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-      };
-    };
-
-    // Function to sync viewers
-    const syncViewers = (sourceViewer: any, targetViewer: any) => {
-      if (!sourceViewer || !targetViewer) return;
-
-      let isUpdating = false;
-      const debouncedSync = debounce(() => {
-        if (isUpdating || !sourceViewer || !targetViewer) return;
-        
-        try {
-          isUpdating = true;
-          const center = sourceViewer.viewport.getCenter();
-          const zoom = sourceViewer.viewport.getZoom();
-          
-          // Only update if there's a significant change
-          const currentCenter = targetViewer.viewport.getCenter();
-          const currentZoom = targetViewer.viewport.getZoom();
-          
-          const centerDiff = Math.abs(center.x - currentCenter.x) + Math.abs(center.y - currentCenter.y);
-          const zoomDiff = Math.abs(zoom - currentZoom);
-          
-          if (centerDiff > 0.001 || zoomDiff > 0.001) {
-            targetViewer.viewport.panTo(center, false);
-            targetViewer.viewport.zoomTo(zoom, null, false);
-          }
-        } catch (error) {
-          console.error('Error syncing viewers:', error);
-        } finally {
-          isUpdating = false;
-        }
-      }, 16); // 60fps rate limit
-
-      const handler = () => {
-        if (!isUpdating) {
-          debouncedSync();
-        }
-      };
-
-      sourceViewer.addHandler('pan', handler);
-      sourceViewer.addHandler('zoom', handler);
-
-      return handler;
+      viewerObjRef.current = null;
+      compareViewerObjRef.current = null;
     };
 
     (async () => {
+      // Only run template-based viewer for template-based configs (selectedLayerId contains ":")
+      // OR when we have no layerConfig at all
+      if (!selectedLayerId?.includes(":")) {
+        cleanup();
+        return;
+      }
+      
+      if (!layerConfig) {
+        cleanup();
+        return;
+      }
+
       try {
-        // Clean up existing viewers first
+        const OSDModule = await import("openseadragon");
+        osdModule = OSDModule.default ?? OSDModule;
+
+        // wait one tick for DOM
+        await new Promise((r) => setTimeout(r, 0));
+        if (!mounted) return;
+
+        // destroy any existing viewers
         cleanup();
 
-        // Import OpenSeadragon
-        const OSDModule = await import("openseadragon");
-        const osd = OSDModule.default || OSDModule;
-        
-        // Wait for a tick to ensure DOM is ready
-        await new Promise(resolve => setTimeout(resolve, 0));
-      
-        const activeTemplate = getActiveTemplate();
-        const overlayTemplate = selectedOverlayId ? 
-          TREK_TEMPLATES[selectedBody].find(l => l.id === selectedOverlayId) : 
-          null;
+        // create tileSource object appropriate for OpenSeadragon
+        const minZoom = layerConfig.min_zoom ?? 0;
+        const maxZoom = layerConfig.max_zoom ?? 8;
+        const tileSize = layerConfig.tile_size ?? 256;
+        const zoomLevels = Math.max(0, maxZoom - minZoom);
 
-        if (!viewerRef.current) {
-          console.error('Main viewer element not found');
-          return;
-        }
+        // For standard web map tiles, both dimensions use the same formula
+        const virtualWidth = tileSize * Math.pow(2, zoomLevels);
+        const virtualHeight = tileSize * Math.pow(2, zoomLevels);
+
+        // tile URL template from layerConfig
+        const template = layerConfig.tile_url_template;
+        
+        // Create a template object for comparison logic
+        const foundTemplate = {
+          template: layerConfig.tile_url_template,
+          type: "base" as const
+        };
+
+        const tileSource: any = {
+          width: virtualWidth,
+          height: virtualHeight,
+          tileSize,
+          minLevel: 0,
+          maxLevel: zoomLevels,
+          getTileUrl: function (level: number, x: number, y: number) {
+            // Map OpenSeadragon level (0..maxLevel) -> WMTS z (minZoom..maxZoom)
+            const z = level + minZoom;
+            // compute wrapping & row/col counts at that z
+            const maxTiles = Math.pow(2, level);
+
+            // wrap x horizontally
+            const wrappedX = ((x % maxTiles) + maxTiles) % maxTiles;
+            // if y outside range, return empty string (OS will skip)
+            if (y < 0 || y >= maxTiles) return "";
+
+            let finalY = y;
+            let finalX = wrappedX;
+            
+            // Special handling for NASA GIBS (uses TMS coordinate system)
+            if (template.includes('gibs.earthdata.nasa.gov')) {
+              // GIBS uses TMS where Y is flipped: y_tms = (2^z - 1) - y_xyz
+              // Use actual zoom level z, not OpenSeadragon level
+              finalY = Math.pow(2, z) - 1 - y;
+            }
+
+            // template might use {z}/{row}/{col} or {z}/{y}/{x} or {z}/{col}/{row}
+            return template
+              .replace(/{z}/g, String(z))
+              .replace(/{row}/g, String(finalY))
+              .replace(/{col}/g, String(finalX))
+              .replace(/{x}/g, String(finalX))
+              .replace(/{y}/g, String(finalY));
+          },
+        };
 
         // Create main viewer
-        mainViewer = await createViewer(viewerRef, activeTemplate, osd);
-        if (!mounted) {
-          cleanup();
-          return;
-        }
-        if (!mainViewer) {
-          console.error('Failed to create main viewer');
-          return;
-        }
-        setViewerObj(mainViewer);
+        if (!viewerRef.current) return;
+        
+        // Clear any existing content to prevent conflicts  
+        viewerRef.current.innerHTML = "";
+        mainViewer = new osdModule({
+          element: viewerRef.current,
+          prefixUrl: "https://cdn.jsdelivr.net/npm/openseadragon@latest/build/openseadragon/images/",
+          tileSources: [tileSource],
+          showNavigator: true,
+          navigatorSizeRatio: 0.18,
+          gestureSettingsMouse: { clickToZoom: false },
+          constrainDuringPan: true,
+          homeFillsViewer: true,
+          visibilityRatio: 0.5,
+          wrapHorizontal: true,
+          wrapVertical: false,
+          animationTime: 0.25,
+        });
 
-        // Create compare viewer if in split or overlay mode
-        if ((viewMode === "split" || viewMode === "overlay") && overlayTemplate) {
+        viewerObjRef.current = mainViewer;
+
+        // Add overlays (like center crosshair) when open
+        mainViewer.addHandler("open", function () {
+          addCenterCrosshair(mainViewer);
+        });
+
+        // If split or overlay mode, create compare viewer
+        const overlayTemplate = selectedOverlayId
+          ? (TREK_TEMPLATES[selectedBody] || []).find((t) => t.id === selectedOverlayId)
+          : null;
+        
+        // For split mode, use the overlay template if selected, otherwise use the main template
+        // For overlay mode, require an overlay template
+        const compareTemplate = overlayTemplate || (viewMode === "split" ? foundTemplate : null);
+
+        console.log("Debug viewer creation:", {
+          viewMode,
+          selectedOverlayId,
+          overlayTemplate: !!overlayTemplate,
+          foundTemplate: !!foundTemplate,
+          compareTemplate: !!compareTemplate,
+          shouldCreateCompare: (viewMode === "split" || viewMode === "overlay") && compareTemplate
+        });
+
+        if ((viewMode === "split" || viewMode === "overlay") && compareTemplate) {
           if (!compareViewerRef.current) {
-            console.error('Compare viewer element not found');
-            return;
-          }
-          
-          compareViewer = await createViewer(compareViewerRef, overlayTemplate, osd);
-          if (!mounted) {
-            cleanup();
-            return;
-          }
-          if (!compareViewer) {
-            console.error('Failed to create compare viewer');
-            return;
-          }
-          setCompareViewerObj(compareViewer);
-
-          // Set opacity for overlay mode
-          if (viewMode === "overlay" && compareViewer) {
-            try {
-              const item = compareViewer.world.getItemAt(0);
-              if (item && item.setOpacity) {
-                item.setOpacity(overlayOpacity);
-              }
-            } catch (error) {
-              console.error('Error setting overlay opacity:', error);
-            }
-          }
-
-          // Set up viewport synchronization for split and overlay modes
-          if ((viewMode === "split" || viewMode === "overlay") && mainViewer && compareViewer) {
-            // Sync both ways for both split and overlay views to ensure synchronization
-            const mainToCompareHandler = syncViewers(mainViewer, compareViewer);
-            const compareToMainHandler = syncViewers(compareViewer, mainViewer);
-
-            // Clean up sync handlers when component unmounts
-            const originalCleanup = cleanup;
-            cleanup = () => {
-              if (mainToCompareHandler) {
-                mainViewer?.removeHandler('pan', mainToCompareHandler);
-                mainViewer?.removeHandler('zoom', mainToCompareHandler);
-              }
-              if (compareToMainHandler) {
-                compareViewer?.removeHandler('pan', compareToMainHandler);
-                compareViewer?.removeHandler('zoom', compareToMainHandler);
-              }
-              originalCleanup();
+            console.error("Compare viewer container not found");
+          } else {
+            // Build compare viewer tile source using compareTemplate
+            const compareTileSource: any = {
+              width: virtualWidth,
+              height: virtualHeight,
+              tileSize,
+              minLevel: 0,
+              maxLevel: zoomLevels,
+              getTileUrl(level: number, x: number, y: number) {
+                const z = level + minZoom;
+                const maxTiles = Math.pow(2, level);
+                const wrappedX = ((x % maxTiles) + maxTiles) % maxTiles;
+                if (y < 0 || y >= maxTiles) return "";
+                
+                let finalY = y;
+                let finalX = wrappedX;
+                
+                let url = compareTemplate.template;
+                if (compareTemplate.type === "temporal" && selectedDate) {
+                  const formattedDate = formatDateForTemplate(selectedDate, compareTemplate);
+                  url = url.replace("{date}", formattedDate);
+                }
+                
+                // Special handling for NASA GIBS (uses TMS coordinate system)
+                if (url.includes('gibs.earthdata.nasa.gov')) {
+                  // GIBS uses TMS where Y is flipped: y_tms = (2^z - 1) - y_xyz
+                  finalY = Math.pow(2, z) - 1 - y;
+                }
+                
+                return url
+                  .replace(/{z}/g, String(z))
+                  .replace(/{row}/g, String(finalY))
+                  .replace(/{col}/g, String(finalX))
+                  .replace(/{x}/g, String(finalX))
+                  .replace(/{y}/g, String(finalY));
+              },
             };
+
+            compareViewer = new osdModule({
+              element: compareViewerRef.current,
+              prefixUrl: "https://cdn.jsdelivr.net/npm/openseadragon@latest/build/openseadragon/images/",
+              tileSources: [compareTileSource],
+              showNavigator: viewMode === "split",
+              navigatorSizeRatio: 0.14,
+              gestureSettingsMouse: { clickToZoom: false },
+              constrainDuringPan: true,
+              homeFillsViewer: true,
+              visibilityRatio: 0.5,
+              wrapHorizontal: true,
+            });
+
+            compareViewerObjRef.current = compareViewer;
+
+            // Sync viewers with guards to prevent infinite recursion
+            let isUpdating = false;
+            const sync = (src: any, dst: any, id: string) => {
+              if (!src || !dst) return;
+              const handler = () => {
+                if (isUpdating) return; // Prevent infinite recursion
+                
+                try {
+                  isUpdating = true;
+                  const center = src.viewport.getCenter();
+                  const zoom = src.viewport.getZoom();
+                  
+                  // Use immediate=false to prevent triggering events during sync
+                  dst.viewport.panTo(center, false);
+                  dst.viewport.zoomTo(zoom, null, false);
+                } catch (error) {
+                  console.error(`Error syncing viewer ${id}:`, error);
+                } finally {
+                  // Reset the flag after a short delay to allow the sync to complete
+                  setTimeout(() => { isUpdating = false; }, 10);
+                }
+              };
+              src.addHandler("pan", handler);
+              src.addHandler("zoom", handler);
+              // return cleanup
+              return () => {
+                src.removeHandler("pan", handler);
+                src.removeHandler("zoom", handler);
+              };
+            };
+
+            // attach bidirectional sync
+            const cleanupA = sync(mainViewer, compareViewer, "main->compare");
+            const cleanupB = sync(compareViewer, mainViewer, "compare->main");
+
+            // set overlay opacity if in overlay mode (use world item)
+            try {
+              if (viewMode === "overlay" && compareViewer.world.getItemAt(0)) {
+                compareViewer.world.getItemAt(0).setOpacity(overlayOpacity);
+              }
+            } catch (err) {
+              // ignore
+            }
+
+            // ensure we remove handlers on cleanup (we'll call cleanup() below)
+            // store cleanups in local closures
           }
-        }
-      } catch (error) {
-        console.error('Error initializing viewers:', error);
-        cleanup();
+        } // end overlay
+
+      } catch (err) {
+        console.error("Error creating OpenSeadragon viewers:", err);
       }
     })();
 
     return () => {
       mounted = false;
-      cleanup();
+      try { if (viewerObjRef.current) viewerObjRef.current.destroy(); } catch {}
+      try { if (compareViewerObjRef.current) compareViewerObjRef.current.destroy(); } catch {}
+      viewerObjRef.current = null;
+      compareViewerObjRef.current = null;
     };
-  }, [selectedBody, selectedLayerId, selectedOverlayId, viewMode, selectedDate]);
+  }, [selectedBody, selectedLayerId, selectedOverlayId, viewMode, selectedDate, layerConfig]);
 
   // Update overlay opacity when it changes
   useEffect(() => {
-    if (viewMode === "overlay" && compareViewerObj) {
-      try {
-        const item = compareViewerObj.world.getItemAt(0);
-        if (item && item.setOpacity) {
-          item.setOpacity(overlayOpacity);
-        }
-      } catch (error) {
-        console.error('Error updating overlay opacity:', error);
-      }
+    if (viewMode !== "overlay") return;
+    const cmp = compareViewerObjRef.current;
+    if (!cmp) return;
+    try {
+      const item = cmp.world.getItemAt(0);
+      if (item && item.setOpacity) item.setOpacity(overlayOpacity);
+    } catch (err) {
+      // ignore
     }
-  }, [overlayOpacity, compareViewerObj, viewMode]);
+  }, [overlayOpacity, viewMode]);
+
+  // Helper to format dates for different APIs
+  function formatDateForTemplate(date: string, template: any): string {
+    if (!date || !template.temporalRange) return date;
+    
+    const format = template.temporalRange.format;
+    switch (format) {
+      case "YYYY-MM-DD":
+        return date; // Already in correct format
+      case "YYYYMMDD":
+        return date.replace(/-/g, "");
+      case "YYYY/MM/DD":
+        return date.replace(/-/g, "/");
+      default:
+        return date;
+    }
+  }
 
   // Helper to pick the currently selected template object
   function getActiveTemplate() {
     const list = TREK_TEMPLATES[selectedBody];
     return list.find((l) => l.id === selectedLayerId) || list[0];
   }
-      if (viewer) viewer.destroy();
-    };
-  }, [layerConfig]);
 
   // USGS Gazetteer KML/KMZ example links are available from the USGS "KML and Shapefile downloads" page.
   // Example KMZ (center points) for Moon and Mars (listed on USGS downloads page):
@@ -555,456 +972,446 @@ export default function TileViewer({ externalSearchQuery }: TileViewerProps) {
   // Fetch and parse a KMZ (USGS Gazetteer center points) and convert to GeoJSON (togeojson)
   async function fetchGazetteerKMZ(kmzUrl: string): Promise<PlanetFeature[]> {
     try {
-      if (!backendBase) {
-        console.warn("NEXT_PUBLIC_BACKEND_URL not set; skipping KMZ fetch");
-        return [];
-      }
-
-      const proxyUrl = `${backendBase}/proxy/kmz?url=${encodeURIComponent(
-        kmzUrl
-      )}`;
-
-      const r = await fetch(proxyUrl);
+      // If backend proxy set, use it to avoid CORS problems; otherwise try direct fetch
+      const fetchUrl = backendBase ? `${backendBase}/proxy/kmz?url=${encodeURIComponent(kmzUrl)}` : kmzUrl;
+      const r = await fetch(fetchUrl);
       if (!r.ok) {
         console.warn("KMZ fetch failed", r.status, r.statusText);
         return [];
       }
       const arrayBuffer = await r.arrayBuffer();
       const zip = await JSZip.loadAsync(arrayBuffer);
-      // Look for the first .kml file inside the KMZ
-      const kmlEntryName = Object.keys(zip.files).find((n) =>
-        n.toLowerCase().endsWith(".kml")
-      );
+      const kmlEntryName = Object.keys(zip.files).find((n) => n.toLowerCase().endsWith(".kml"));
       if (!kmlEntryName) {
         console.warn("No KML inside KMZ");
         return [];
       }
       const kmlText = await zip.files[kmlEntryName].async("text");
-      // Parse KML into DOM and convert
       const parser = new DOMParser();
       const kmlDoc = parser.parseFromString(kmlText, "application/xml");
-      const geojson = (toGeoJSON as {
-        kml: (doc: Document) => FeatureCollection<Point, { name?: string; Name?: string }>;
-      }).kml(kmlDoc);
-      const points: PlanetFeature[] = [];
+      const geojson = (toGeoJSON as any).kml(kmlDoc) as FeatureCollection;
+      const pts: PlanetFeature[] = [];
       for (const feat of geojson.features ?? []) {
-        if (feat.geometry?.type !== "Point" || !feat.geometry.coordinates) continue;
-        const [lon, lat] = feat.geometry.coordinates;
-        points.push({
-          name: feat.properties?.name || feat.properties?.Name || "unnamed",
+        if (!feat.geometry || feat.geometry.type !== "Point") continue;
+        const [lon, lat] = (feat.geometry as Point).coordinates;
+        pts.push({
+          name: (feat.properties as any)?.name || (feat.properties as any)?.Name || "unnamed",
           lat: Number(lat),
           lon: Number(lon),
         });
       }
-      return points;
+      return pts;
     } catch (err) {
-      console.error("Error parsing KMZ", err);
+      console.error("Error parsing KMZ:", err);
       return [];
     }
   }
 
-  // Example: load moon Gazetteer center points
   async function loadMoonGazetteer() {
-    // Real KMZ links are listed on the USGS downloads page; here is the center-points KMZ for Moon:
-    const moonKmz =
-      "https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/MOON_nomenclature_center_pts.kmz";
+    const moonKmz = "https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/MOON_nomenclature_center_pts.kmz";
     const pts = await fetchGazetteerKMZ(moonKmz);
-    setFeatures(pts.slice(0, 500)); // don't load too many into UI instantly
+    setFeatures(pts.slice(0, 500));
   }
 
-  // Example: query USGS pygeoapi crater DB (Mars Robbins) — returns JSON features.
-  // This endpoint is provided by USGS Astrogeology (pygeoapi). Example:
-  // https://astrogeology.usgs.gov/pygeoapi/collections/mars/robbinsv1/items?limit=10
-  async function queryMarsCraterDB(q: string) {
-    const moonKmz =
-      "https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/MARS_nomenclature_center_pts.kmz";
-    const pts = await fetchGazetteerKMZ(moonKmz);
-    setFeatures(pts.slice(0, 500)); // don't load too many into UI instantly
-    const base =
-      "https://astrogeology.usgs.gov/pygeoapi/collections/mars/robbinsv1/items?f=json";
-    // We can use 'limit' and bbox params per pygeoapi. Here we do a simple limited fetch.
-    const resp = await fetch(base + "&limit=200");
-    if (!resp.ok) {
-      console.warn("pygeoapi fetch failed", resp.status);
-      return;
-    }
-    const j = await resp.json();
-    type MarsApiFeature = {
-      properties: {
-        craterid?: string;
-        name?: string;
-        lat?: number;
-        lon_e?: number;
-        diamkm?: number;
-      };
-    };
-    const rawFeatures = (j.features ?? []) as MarsApiFeature[];
-    const items: PlanetFeature[] = rawFeatures
-      .map((f) => {
-        const lat = f.properties.lat;
-        const lon = f.properties.lon_e;
-        if (typeof lat !== "number" || typeof lon !== "number") {
-          return null;
-        }
+  async function queryMarsCraterDB() {
+    // First try USGS center points KMZ to populate names
+    const marsKmz = "https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/MARS_nomenclature_center_pts.kmz";
+    const ptsFromKmz = await fetchGazetteerKMZ(marsKmz);
+    // then fetch Robbins crater DB via pygeoapi
+    const base = "https://astrogeology.usgs.gov/pygeoapi/collections/mars/robbinsv1/items?f=json&limit=500";
+    try {
+      const resp = await fetch(base);
+      if (!resp.ok) {
+        console.warn("pygeoapi fetch failed", resp.status);
+        // fallback to kmz points
+        setFeatures(ptsFromKmz.slice(0, 500));
+        return;
+      }
+      const j = await resp.json();
+      const items = (j.features ?? []).map((f: any) => {
+        const lat = f.properties?.lat;
+        const lon = f.properties?.lon_e;
+        if (typeof lat !== "number" || typeof lon !== "number") return null;
         return {
-          name: f.properties.craterid || f.properties.name || "crater",
+          name: f.properties?.craterid || f.properties?.name || "crater",
           lat,
           lon,
-          diamkm: f.properties.diamkm,
-        } satisfies PlanetFeature;
-      })
-      .filter((f): f is PlanetFeature => Boolean(f));
-    setFeatures(items.slice(0, 1000));
-  }
+          diamkm: f.properties?.diamkm,
+        } as PlanetFeature;
+      }).filter(Boolean) as PlanetFeature[];
 
-  // Add overlay elements to the viewer
-  function addOverlays(viewer: any) {
-    if (!viewer || !viewer.addOverlay) return;
-
-    try {
-      // Clear existing overlays by removing their DOM elements
-      const overlayContainer = viewer.element.querySelector('.overlay-container');
-      if (overlayContainer) {
-        while (overlayContainer.firstChild) {
-          overlayContainer.removeChild(overlayContainer.firstChild);
-        }
-      }
-
-      // Add center crosshair
-      const centerElement = document.createElement('div');
-      centerElement.style.cssText = `
-        width: 20px;
-        height: 20px;
-        position: absolute;
-        pointer-events: none;
-        border: 2px solid rgba(255, 255, 255, 0.8);
-        border-radius: 50%;
-        z-index: 1000;
-      `;
-      
-      // Add the center overlay (stays fixed in viewport center)
-      viewer.addOverlay({
-        element: centerElement,
-        location: viewer.viewport.getCenter(),
-        placement: 'CENTER',
-        checkResize: false
-      });
-    } catch (error) {
-      console.error('Error adding overlays:', error);
+      // merge with kmz names (prefer pygeoapi for craters)
+      const merged = items.concat(ptsFromKmz).slice(0, 1000);
+      setFeatures(merged);
+    } catch (err) {
+      console.error("Error fetching Mars crater DB:", err);
+      setFeatures(ptsFromKmz.slice(0, 500));
     }
   }
-    // Add center crosshair
-    const centerElement = document.createElement('div');
-    centerElement.style.cssText = `
-      width: 20px;
-      height: 20px;
-      position: absolute;
-      pointer-events: none;
-      border: 2px solid rgba(255, 255, 255, 0.8);
-      border-radius: 50%;
-    `;
+
+  async function searchEarthLocations(query: string) {
+    if (!query.trim()) return;
     
-    // Add the center overlay (stays fixed in viewport center)
-    viewerObj.addOverlay({
-      element: centerElement,
-      location: new viewerObj.viewport.pointFromPixel(
-        viewerObj.viewport.getContainerSize().x / 2,
-        viewerObj.viewport.getContainerSize().y / 2
-      ),
-      placement: 'CENTER',
-      checkResize: false
-    });
+    try {
+      // Use Nominatim (OpenStreetMap) geocoding API for Earth locations
+      const encodedQuery = encodeURIComponent(query.trim());
+      const resp = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodedQuery}&format=json&limit=20&addressdetails=1`
+      );
+      
+      if (!resp.ok) {
+        console.warn("Nominatim geocoding failed:", resp.status);
+        return;
+      }
+      
+      const results = await resp.json();
+      const locations: PlanetFeature[] = results.map((item: any) => ({
+        name: item.display_name,
+        lat: parseFloat(item.lat),
+        lon: parseFloat(item.lon),
+        type: item.type,
+        class: item.class
+      }));
+      
+      setFeatures(locations);
+    } catch (err) {
+      console.error("Error searching Earth locations:", err);
+    }
+  }
+
+  async function loadMercuryGazetteer() {
+    const mercuryKmz = "https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/MERCURY_nomenclature_center_pts.kmz";
+    const pts = await fetchGazetteerKMZ(mercuryKmz);
+    setFeatures(pts.slice(0, 500));
+  }
+
+  async function loadCeresGazetteer() {
+    const ceresKmz = "https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/CERES_nomenclature_center_pts.kmz";
+    const pts = await fetchGazetteerKMZ(ceresKmz);
+    setFeatures(pts.slice(0, 500));
+  }
+
+  async function loadVestaGazetteer() {
+    const vestaKmz = "https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/VESTA_nomenclature_center_pts.kmz";
+    const pts = await fetchGazetteerKMZ(vestaKmz);
+    setFeatures(pts.slice(0, 500));
+  }
+
+  // ---------- overlays / helpers ----------
+  function addCenterCrosshair(viewer: any) {
+    if (!viewer) return;
+    try {
+      const centerEl = document.createElement("div");
+      centerEl.className = "osd-center-crosshair";
+      centerEl.style.cssText = `
+        width: 18px;
+        height: 18px;
+        border: 2px solid rgba(255,255,255,0.9);
+        border-radius: 50%;
+        pointer-events: none;
+        transform: translate(-50%, -50%);
+      `;
+      // place at viewport center
+      viewer.addOverlay({
+        element: centerEl,
+        location: viewer.viewport.getCenter(),
+        placement: "CENTER",
+        checkResize: false,
+      });
+    } catch (err) {
+      console.error("addCenterCrosshair error:", err);
+    }
+  }
 
   // Utility: pan/zoom viewer to lon/lat for NASA Trek tiles
   function panToLonLat(lon: number, lat: number, zoomLevel = 4) {
-    if (!viewerObj) return;
-    
-    // NASA Trek uses tiles in a Web Mercator-like projection
-    // The source image represents 360° of longitude from 0° to 360° (not -180° to 180°)
-    // and latitude from 90° to -90° (north to south)
-    
-    // Normalize longitude to 0-360° range
+    const v = viewerObjRef.current;
+    if (!v) return;
+
+    // Normalize lon from -180..180 to 0..360 used by Trek tile images
     lon = ((lon % 360) + 360) % 360;
-    
-    // Constrain latitude to -90° to 90°
     lat = Math.max(-90, Math.min(90, lat));
-    
-    // Get the current tile source dimensions
-    const source = viewerObj.world.getItemAt(0);
-    const imgW = source.source.width;
-    const imgH = source.source.height;
-    
-    // Convert to tile coordinates
-    // For longitude: 0° -> 0, 360° -> imgW
-    const x = (lon / 360) * imgW;
-    // For latitude: 90° -> 0, -90° -> imgH (matching Trek's coordinate system)
-    const y = ((90 - lat) / 180) * imgH;
-    
-    // Create feature marker overlay
-    const markerElement = document.createElement('div');
-    markerElement.style.cssText = `
-      width: 24px;
-      height: 24px;
-      position: absolute;
-      pointer-events: none;
-      border: 3px solid rgba(255, 100, 100, 0.8);
-      border-radius: 50%;
-      transform: translate(-50%, -50%);
-      animation: pulse 2s infinite;
-    `;
 
-    // Add pulse animation style
-    const style = document.createElement('style');
-    style.textContent = `
-      @keyframes pulse {
-        0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
-        50% { transform: translate(-50%, -50%) scale(1.5); opacity: 0.5; }
-        100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
-      }
-    `;
-    document.head.appendChild(style);
-
-    // Remove old feature markers
-    const oldMarkers = document.querySelectorAll('.feature-marker');
-    oldMarkers.forEach(marker => marker.remove());
-    markerElement.classList.add('feature-marker');
-
-      // Add the feature marker overlay
+    // get image dimensions from the first world item
+    let sourceItem;
     try {
-      if (viewerObj && viewerObj.addOverlay) {
-        viewerObj.addOverlay({
-          element: markerElement,
-          location: viewerObj.viewport.imageToViewportCoordinates(x, y),
-          placement: 'CENTER',
-          checkResize: false
-        });
-      }
-    } catch (error) {
-      console.error('Error adding marker overlay:', error);
+      sourceItem = v.world.getItemAt(0);
+    } catch (err) {
+      console.error("No world item in viewer", err);
+      return;
     }
+    if (!sourceItem || !sourceItem.source) {
+      console.error("No source info");
+      return;
+    }
+    const imgW = sourceItem.source.width;
+    const imgH = sourceItem.source.height;
+    if (!imgW || !imgH) {
+      console.error("Invalid source dimensions", imgW, imgH);
+      return;
+    }
+
+    // convert lon/lat -> image pixels
+    let x: number;
+    let y: number;
     
-    // Debug log to verify coordinate transformation
-    console.log(`Panning to: lon=${lon}°, lat=${lat}°, pixel=(${x}, ${y})`);
-    
-    // Convert to viewport coordinates and pan with animation
-    const point = viewerObj.viewport.imageToViewportCoordinates(x, y);
-    viewerObj.viewport.panTo(point, true);
-    
-    // Zoom with a slight delay to ensure pan completes first
+    // Check if this is an Earth dataset (Web Mercator projection)
+    if (selectedBody === "earth") {
+      // Web Mercator projection (EPSG:3857)
+      // Convert longitude to X (simple linear conversion)
+      x = ((lon + 180) / 360) * imgW;
+      
+      // Convert latitude to Y using Web Mercator formula
+      const latRad = (lat * Math.PI) / 180;
+      const mercatorY = Math.log(Math.tan(Math.PI / 4 + latRad / 2));
+      // Normalize from [-π, π] to [0, 1] and flip Y coordinate
+      y = ((Math.PI - mercatorY) / (2 * Math.PI)) * imgH;
+    } else {
+      // For other planetary bodies, use simple equirectangular projection
+      x = ((lon + 180) / 360) * imgW;
+      y = ((90 - lat) / 180) * imgH;
+    }
+
+    // create marker element
+    const marker = document.createElement("div");
+    marker.className = "feature-marker";
+    marker.style.cssText = `
+      width: 22px; height:22px; border:3px solid rgba(255,80,80,0.95);
+      border-radius:50%; background: rgba(255, 80, 80, 0.25);
+      transform: translate(-50%, -50%); pointer-events: auto;
+    `;
+
+    // remove old markers and overlays
+    document.querySelectorAll(".feature-marker").forEach((el) => el.remove());
+    // Clear existing overlays from viewer
+    try {
+      v.clearOverlays();
+    } catch (err) {
+      console.warn("Could not clear overlays:", err);
+    }
+
+    // add overlay
+    try {
+      v.addOverlay({
+        element: marker,
+        location: v.viewport.imageToViewportCoordinates(x, y),
+        placement: "CENTER",
+        checkResize: false,
+      });
+    } catch (err) {
+      console.error("Error adding overlay:", err);
+    }
+
+    // pan+zoom
+    const viewportPoint = v.viewport.imageToViewportCoordinates(x, y);
+    v.viewport.panTo(viewportPoint, true);
     setTimeout(() => {
-      viewerObj.viewport.zoomTo(zoomLevel, point, true);
-    }, 100);
+      v.viewport.zoomTo(zoomLevel, viewportPoint, true);
+    }, 120);
   }
 
-  // Filter features by searchText (case-insensitive substring match on name)
+  // filtered features by search text
   const filteredFeatures = features.filter((f) => {
     if (!searchText) return true;
-    if (!f.name) return false;
-    return f.name.toLowerCase().includes(searchText.toLowerCase());
+    return f.name?.toLowerCase().includes(searchText.toLowerCase());
   });
 
+  // ---------- UI -----------------------------------------------------
   return (
     <div style={{ display: "flex", gap: 12 }}>
       <div style={{ flex: 1 }}>
         <div style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
-          <label style={{ display: "flex", flexDirection: "column", fontSize: 14 }}>
-            Dataset
-            <select
-              value={selectedLayerId ?? ""}
-              onChange={(e) => setSelectedLayerId(e.target.value)}
-            >
-              {datasets.map((dataset) => (
-                <option key={dataset.id} value={dataset.id}>
-                  {dataset.title}
-                </option>
-              ))}
+          <label>
+            Body:
+            <select value={selectedBody} onChange={(e) => {
+              setSelectedBody(e.target.value as BodyKey);
+              setSelectedLayerId("");
+              setSelectedOverlayId("");
+            }}>
+              <option value="earth">Earth</option>
+              <option value="moon">Moon</option>
+              <option value="mars">Mars</option>
+              <option value="mercury">Mercury</option>
+              <option value="ceres">Ceres</option>
+              <option value="vesta">Vesta</option>
             </select>
           </label>
 
-          <div style={{ marginLeft: 8, display: 'inline-block' }}>
-            <label>View Mode: </label>
-            <select 
-              value={viewMode}
-              onChange={(e) => setViewMode(e.target.value as "single" | "split" | "overlay")}
-            >
-              <option value="single">Single View</option>
-              <option value="split">Split Screen</option>
+          <label>
+            Dataset:
+            <select value={selectedLayerId ?? ""} onChange={(e) => setSelectedLayerId(e.target.value)}>
+              <option value="">(none)</option>
+              {datasets
+                .filter(d => d.body === selectedBody || d.id.startsWith(`${selectedBody}:`))
+                .map((d) => (
+                  <option key={d.id} value={d.id}>{d.title}</option>
+                ))}
+            </select>
+          </label>
+
+          {/* Temporal Date Input for NASA GIBS layers */}
+          {selectedBody === "earth" && selectedLayerId && (
+            (() => {
+              const currentTemplate = (TREK_TEMPLATES[selectedBody] || []).find(t => t.id === selectedLayerId);
+              if (currentTemplate?.type === "temporal") {
+                return (
+                  <label>
+                    Date:
+                    <input 
+                      type="date" 
+                      value={selectedDate} 
+                      onChange={(e) => setSelectedDate(e.target.value)}
+                      min="2000-01-01"
+                      max={new Date().toISOString().split('T')[0]}
+                      style={{ marginLeft: 4 }}
+                    />
+                  </label>
+                );
+              }
+              return null;
+            })()
+          )}
+
+          <label>
+            View Mode:
+            <select value={viewMode} onChange={(e) => setViewMode(e.target.value as any)}>
+              <option value="single">Single</option>
+              <option value="split">Split</option>
               <option value="overlay">Overlay</option>
             </select>
-          </div>
+          </label>
 
           {(viewMode === "split" || viewMode === "overlay") && (
-            <div style={{ marginLeft: 8, display: 'inline-block' }}>
-              <label>Compare Layer: </label>
-              <select
-                value={selectedOverlayId}
-                onChange={(e) => setSelectedOverlayId(e.target.value)}
-              >
-                <option value="">None</option>
-                {TREK_TEMPLATES[selectedBody]
-                  .filter(l => l.type === "overlay" || l.type === "temporal")
-                  .map(l => (
-                    <option key={l.id} value={l.id}>{l.title}</option>
-                  ))
-                }
+            <label>
+              Compare layer:
+              <select value={selectedOverlayId} onChange={(e) => setSelectedOverlayId(e.target.value)}>
+                <option value="">(none)</option>
+                {(TREK_TEMPLATES[selectedBody] || []).map((t) => (
+                  <option key={t.id} value={t.id}>{t.title}</option>
+                ))}
               </select>
-            </div>
+            </label>
+          )}
+
+          {/* Temporal Date Input for NASA GIBS layers */}
+          {selectedBody === "earth" && (
+            (() => {
+              const currentTemplate = selectedLayerId ? 
+                (TREK_TEMPLATES[selectedBody] || []).find(t => t.id === selectedLayerId) : null;
+              const compareTemplate = selectedOverlayId ? 
+                (TREK_TEMPLATES[selectedBody] || []).find(t => t.id === selectedOverlayId) : null;
+              
+              const needsTemporalDate = 
+                (currentTemplate?.type === "temporal") || 
+                (compareTemplate?.type === "temporal");
+              
+              if (needsTemporalDate) {
+                return (
+                  <label>
+                    Date:
+                    <input 
+                      type="date" 
+                      value={selectedDate} 
+                      onChange={(e) => setSelectedDate(e.target.value)}
+                      min="2000-01-01"
+                      max={new Date().toISOString().split('T')[0]}
+                      style={{ marginLeft: 4 }}
+                    />
+                  </label>
+                );
+              }
+              return null;
+            })()
           )}
 
           {viewMode === "overlay" && (
-            <div style={{ marginLeft: 8, display: 'inline-block' }}>
-              <label>Opacity: </label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.1"
-                value={overlayOpacity}
-                onChange={(e) => setOverlayOpacity(Number(e.target.value))}
-              />
-            </div>
+            <label>
+              Opacity:
+              <input type="range" min={0} max={1} step={0.05} value={overlayOpacity} onChange={(e) => setOverlayOpacity(Number(e.target.value))}/>
+            </label>
           )}
 
-          {selectedOverlayId && TREK_TEMPLATES[selectedBody].find(l => l.id === selectedOverlayId)?.type === "temporal" && (
-            <div style={{ marginLeft: 8, display: 'inline-block' }}>
-              <label>Date: </label>
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                min={TREK_TEMPLATES[selectedBody].find(l => l.id === selectedOverlayId)?.temporalRange?.start}
-                max={TREK_TEMPLATES[selectedBody].find(l => l.id === selectedOverlayId)?.temporalRange?.end}
-              />
-            </div>
-          )}
 
-          <button
-            style={{ marginLeft: 8 }}
-            onClick={loadMoonGazetteer}
-          >
-            Load Moon Gazetteer (KMZ)
-          </button>
-
-          <button
-            style={{ marginLeft: 8 }}
-            onClick={() => queryMarsCraterDB(searchText)}
-          >
-            Load Mars crater DB (Robbins)
-          </button>
-          {layerConfig?.attribution && (
-            <span style={{ fontSize: 12, color: "#888" }}>
-              {layerConfig.attribution}
-            </span>
-          )}
-
-          {selectedBody === "moon" && (
-            <button style={{ marginLeft: "auto" }} onClick={loadMoonGazetteer}>
-              Reload Moon Gazetteer
-            </button>
-          )}
-          {selectedBody === "mars" && (
-            <button
-              onClick={() => queryMarsCraterDB()}
-            >
-              Reload Mars Craters
-            </button>
-          )}
+          {selectedBody === "moon" && <button onClick={loadMoonGazetteer}>Load Moon Features</button>}
+          {selectedBody === "mars" && <button onClick={() => queryMarsCraterDB()}>Load Mars Features</button>}
+          {selectedBody === "mercury" && <button onClick={loadMercuryGazetteer}>Load Mercury Features</button>}
+          {selectedBody === "ceres" && <button onClick={loadCeresGazetteer}>Load Ceres Features</button>}
+          {selectedBody === "vesta" && <button onClick={loadVestaGazetteer}>Load Vesta Features</button>}
         </div>
 
         <div style={{ width: "100%", height: "640px", position: "relative" }}>
-          {/* Main viewer */}
-          <div
-            ref={viewerRef}
-            style={{ 
-              width: viewMode === "split" ? "50%" : "100%", 
-              height: "100%", 
-              background: "#000",
-              position: "absolute",
-              left: 0,
-              top: 0
-            }}
-          />
-          
-          {/* Compare viewer for split/overlay mode */}
-          {(viewMode === "split" || viewMode === "overlay") && (
-            <div
-              ref={compareViewerRef}
-              style={{ 
-                width: viewMode === "split" ? "50%" : "100%", 
-                height: "100%", 
-                background: viewMode === "split" ? "#000" : "transparent",
-                position: "absolute",
-                right: viewMode === "split" ? 0 : undefined,
-                left: viewMode === "overlay" ? 0 : undefined,
-                top: 0,
-                pointerEvents: "auto"
-              }}
-            />
-          )}
-          
-          {/* Overlay controls */}
-          {viewMode === "overlay" && selectedOverlayId && (
-            <div 
-              style={{
-                position: "absolute",
-                bottom: 20,
-                left: "50%",
-                transform: "translateX(-50%)",
-                background: "rgba(0,0,0,0.7)",
-                padding: "8px 16px",
-                borderRadius: 4,
-                color: "white",
-                display: "flex",
-                alignItems: "center",
-                gap: 8
-              }}
-            >
-              <label>Opacity:</label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.1"
-                value={overlayOpacity}
-                onChange={(e) => setOverlayOpacity(Number(e.target.value))}
-                style={{ width: 100 }}
-              />
-              <span>{Math.round(overlayOpacity * 100)}%</span>
+          {!isClient ? (
+            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "#000", color: "white" }}>
+              Loading viewer...
             </div>
+          ) : !layerConfig ? (
+            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "#222", color: "white" }}>
+              {selectedLayerId ? `Loading layer: ${selectedLayerId}...` : `Select a layer for ${selectedBody}`}
+            </div>
+          ) : (
+            <>
+              <div ref={viewerRef} style={{ width: viewMode === "split" ? "50%" : "100%", height: "100%", position: "absolute", left: 0, top: 0 }} />
+              {(viewMode === "split" || viewMode === "overlay") && (
+                <div ref={compareViewerRef} style={{ width: viewMode === "split" ? "50%" : "100%", height: "100%", position: "absolute", right: 0, top: 0, pointerEvents: "auto" }} />
+              )}
+            </>
           )}
         </div>
       </div>
 
-      <div style={{ width: 360, overflow: "auto", borderLeft: "1px solid #ddd", padding: 8 }}>
+      <aside style={{ width: 360, borderLeft: "1px solid #eee", padding: 8, overflow: "auto" }}>
         <h3>Features / Search</h3>
-        <p style={{ fontSize: 12, color: "#666" }}>
-          Click a feature to pan/zoom the viewer (equirectangular layers).
-        </p>
+        <div style={{ position: "relative", marginBottom: 8 }}>
+          <input 
+            type="text" 
+            placeholder="Filter features..." 
+            value={searchText} 
+            onChange={(e) => {
+              const newValue = e.target.value;
+              setSearchText(newValue);
+              onSearchChange?.(newValue);
+            }} 
+            style={{ width: "100%", paddingRight: searchText ? "30px" : "8px" }} 
+          />
+          {searchText && (
+            <button
+              onClick={() => {
+                setSearchText("");
+                onSearchChange?.("");
+              }}
+              style={{
+                position: "absolute",
+                right: "8px",
+                top: "50%",
+                transform: "translateY(-50%)",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                fontSize: "16px",
+                color: "#666",
+                padding: "2px"
+              }}
+              title="Clear search"
+            >
+              ×
+            </button>
+          )}
+        </div>
         {filteredFeatures.length === 0 ? (
-          <div style={{ color: '#888', fontSize: 14, marginTop: 16 }}>
-            {features.length === 0
-              ? 'No features loaded for this body.'
-              : 'No features match your search.'}
-          </div>
+          <div style={{ color: "#888" }}>{features.length === 0 ? "No features loaded for this body." : "No features match your search."}</div>
         ) : (
-          <ul style={{ padding: 0, listStyle: "none" }}>
+          <ul style={{ listStyle: "none", padding: 0 }}>
             {filteredFeatures.map((f, i) => (
               <li key={i} style={{ marginBottom: 8 }}>
-                <button
-                  style={{ width: "100%", textAlign: "left" }}
-                  onClick={() => panToLonLat(f.lon, f.lat, 6)}
-                >
+                <button style={{ width: "100%", textAlign: "left" }} onClick={() => panToLonLat(f.lon, f.lat, 6)}>
                   <strong>{f.name}</strong>
-                  <div style={{ fontSize: 12 }}>
-                    {f.lat?.toFixed?.(4)}, {f.lon?.toFixed?.(4)}{" "}
-                    {f.diamkm ? ` • ${f.diamkm} km` : ""}
-                  </div>
+                  <div style={{ fontSize: 12 }}>{f.lat.toFixed(4)}, {f.lon.toFixed(4)} {f.diamkm ? `• ${f.diamkm} km` : ""}</div>
                 </button>
               </li>
             ))}
           </ul>
         )}
-      </div>
+      </aside>
     </div>
   );
 }

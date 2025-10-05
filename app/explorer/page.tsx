@@ -2,7 +2,7 @@
 
 import { useEffect, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import Image from "next/image";
 import GlassSearchBar from '../components/search_bar';
 import TileViewerWrapper from '../components/tileViewWrapper';
 
@@ -10,19 +10,68 @@ function ExplorerContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [navigationParams, setNavigationParams] = useState<{
+    body?: string;
+    lat?: number;
+    lon?: number;
+    zoom?: number;
+  }>({});
 
   useEffect(() => {
-    // Get the search query from URL params
+    // Get the search query and filter from URL params
     const query = searchParams.get('search');
-    if (query) {
+    const filter = searchParams.get('filter');
+    
+    // Set search query even if it's null or empty string
+    if (query !== null) {
       setSearchQuery(query);
+    } else {
+      setSearchQuery(''); // Clear search if not in URL
     }
+    
+    // Always set selectedBody based on URL param (including null to clear it)
+    if (filter !== null) {
+      setSelectedBody(filter);
+    } else {
+      setSelectedBody(null); // Clear filter if not in URL
+    }
+
+    // Get navigation parameters from PhotoSphereGallery
+    const body = searchParams.get('body');
+    const lat = searchParams.get('lat');
+    const lon = searchParams.get('lon');
+    const zoom = searchParams.get('zoom');
+
+    setNavigationParams({
+      body: body || undefined,
+      lat: lat ? parseFloat(lat) : undefined,
+      lon: lon ? parseFloat(lon) : undefined,
+      zoom: zoom ? parseInt(zoom) : undefined,
+    });
   }, [searchParams]);
 
   const handleSearch = (query: string) => {
     setSearchQuery(query);
-    // Update URL with new search query
-    router.push(`/explorer?search=${encodeURIComponent(query)}`);
+    // Update URL with search query and current filter (allow empty search)
+    const params = new URLSearchParams();
+    // Always include search param to trigger search update (even if empty)
+    params.append('search', query.trim());
+    if (selectedBody) {
+      params.append('filter', selectedBody);
+    }
+    router.push(`/explorer?${params.toString()}`);
+  };
+
+  const handleFilterChange = (filter: string | null) => {
+    setSelectedBody(filter);
+    // Update URL with current search and new filter
+    const params = new URLSearchParams();
+    // Always include search param
+    params.append('search', searchQuery.trim());
+    if (filter) {
+      params.append('filter', filter);
+    }
+    router.push(`/explorer?${params.toString()}`);
   };
 
   const handleBackToHome = () => {
@@ -33,24 +82,32 @@ function ExplorerContent() {
     <div className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-800 to-black">
       {/* Header with Search Bar */}
       <header className="sticky top-0 z-50 bg-gray-900/80 backdrop-blur-md border-b border-white/10">
-        <div className="max-w-[1800px] mx-auto px-4 sm:px-8 py-4">
+        <div className="max-w-[1800px] mx-auto px-4 sm:px-8 py-6">
           <div className="flex items-center gap-4">
-            {/* Back button */}
+            {/* Logo */}
             <button
               onClick={handleBackToHome}
-              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-full transition-all border border-white/10 hover:border-white/20"
+              className="flex items-center hover:opacity-80 transition-opacity"
               title="Back to home"
             >
-              <ArrowLeft size={20} />
-              <span className="hidden sm:inline">Home</span>
+              <Image 
+                src="/logo_transparent.png" 
+                alt="Logo" 
+                width={200}
+                height={96}
+                className="h-16 w-auto"
+                priority
+              />
             </button>
 
-            {/* Search bar in header */}
+            {/* Search bar with integrated filter */}
             <div className="flex-1">
               <GlassSearchBar 
                 onSearch={handleSearch}
                 value={searchQuery}
-                placeholder={searchQuery || "Search planetary features, locations, coordinates..."}
+                placeholder={"Search planetary features, locations, coordinates..."}
+                selectedFilter={selectedBody}
+                onFilterChange={handleFilterChange}
               />
             </div>
           </div>
@@ -69,16 +126,26 @@ function ExplorerContent() {
               {searchQuery 
                 ? (
                   <>
-                    Showing results for: <span className="text-white/90 font-semibold">&quot;{searchQuery}&quot;</span>
+                    Showing <span className="text-white/90 font-semibold capitalize">{selectedBody || "Moon"}</span> results for: <span className="text-white/90 font-semibold">&quot;{searchQuery}&quot;</span>
                   </>
                 )
-                : "Select a celestial body and explore detailed planetary maps"}
+                : (
+                  <>
+                    Exploring <span className="text-white/90 font-semibold capitalize">{selectedBody || "Moon"}</span> - Use the filter dropdown and search to discover planetary features
+                  </>
+                )}
             </p>
           </div>
           
           {/* Tile viewer */}
           <div className="bg-gray-900/50 rounded-xl p-4 sm:p-6 backdrop-blur-sm border border-white/10 shadow-2xl">
-            <TileViewerWrapper searchQuery={searchQuery} />
+            <TileViewerWrapper 
+              searchQuery={searchQuery} 
+              initialBody={navigationParams.body}
+              initialLat={navigationParams.lat}
+              initialLon={navigationParams.lon}
+              initialZoom={navigationParams.zoom}
+            />
           </div>
 
           {/* Help section */}
@@ -107,9 +174,6 @@ function ExplorerContent() {
 
       {/* Footer */}
       <footer className="relative py-6 px-4 text-center border-t border-white/10 mt-8">
-        <p className="text-white/40 text-sm">
-          Made with ❤️ by Slack Overflow
-        </p>
       </footer>
     </div>
   );

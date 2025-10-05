@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@types/three": "^0.180.0",
     "@vercel/postgres": "^0.10.0",
     "jszip": "^3.10.1",
     "lucide-react": "^0.544.0",
@@ -16,11 +17,13 @@
     "openseadragon": "^5.0.1",
     "react": "19.1.0",
     "react-dom": "19.1.0",
+    "three": "^0.180.0",
     "togeojson": "^0.16.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
+    "@types/geojson": "^7946.0.16",
     "@types/node": "^20",
     "@types/openseadragon": "^4.1.0",
     "@types/react": "^19",
