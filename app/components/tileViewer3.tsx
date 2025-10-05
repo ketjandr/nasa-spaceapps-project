@@ -40,10 +40,12 @@ type ViewerConfigResponse = {
 };
 
 type PlanetFeature = {
+  id?: number;
   name: string;
   lat: number;
   lon: number;
   diamkm?: number;
+  body?: string;
 };
 
 // --- local TREK templates (fallback / examples) ----------------------
@@ -280,11 +282,106 @@ export default function TileViewer({ externalSearchQuery, onSearchChange }: Tile
   const [temporalMode, setTemporalMode] = useState<"single" | "compare" | "animation">("single");
   const [features, setFeatures] = useState<PlanetFeature[]>([]);
   const [searchText, setSearchText] = useState<string>(externalSearchQuery ?? "");
+  const [isSearching, setIsSearching] = useState<boolean>(false);
+  const [selectedFeatureForImages, setSelectedFeatureForImages] = useState<{
+    id: number;
+    name: string;
+    body: string;
+    lat: number;
+    lon: number;
+  } | null>(null);
+
+  // Function to perform backend search
+  async function performBackendSearch(query: string) {
+    if (!backendBase || !query.trim()) return;
+    
+    setIsSearching(true);
+    try {
+      const response = await fetch(`${backendBase}/search/query`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query: query,
+          limit: 10,
+        }),
+      });
+
+      if (!response.ok) {
+        console.warn('Search API failed:', response.status);
+        return;
+      }
+
+      const searchData = await response.json();
+      console.log('Search results:', searchData);
+
+      // If we have results, auto-select the body and navigate to first result
+      if (searchData.results && searchData.results.length > 0) {
+        const firstResult = searchData.results[0];
+        const resultBody = (firstResult.body || 'moon').toLowerCase() as BodyKey;
+        
+        // Set the body
+        setSelectedBody(resultBody);
+        
+        // Find and select the appropriate layer for this body
+        const bodyLayers = TREK_TEMPLATES[resultBody] || [];
+        if (bodyLayers.length > 0) {
+          const baseLayer = bodyLayers.find(l => l.type === 'base') || bodyLayers[0];
+          setSelectedLayerId(`${resultBody}:${baseLayer.id}`);
+          
+          // Wait a bit for the viewer to initialize, then pan to location
+          setTimeout(() => {
+            panToLonLat(firstResult.longitude, firstResult.latitude, 6);
+          }, 1000);
+        }
+
+        // Update features list with search results
+        const searchFeatures: PlanetFeature[] = searchData.results.map((r: any) => ({
+          id: r.id,
+          name: r.name,
+          lat: r.latitude,
+          lon: r.longitude,
+          diamkm: r.diameter,
+          body: r.body,
+        }));
+        setFeatures(searchFeatures);
+      }
+    } catch (error) {
+      console.error('Search error:', error);
+    } finally {
+      setIsSearching(false);
+    }
+  }
 
   // sync external search
   useEffect(() => {
-    if (externalSearchQuery) setSearchText(externalSearchQuery);
+    if (externalSearchQuery) {
+      setSearchText(externalSearchQuery);
+      // Trigger backend search when external query changes
+      performBackendSearch(externalSearchQuery);
+    }
   }, [externalSearchQuery]);
+
+  // Trigger backend search when user types in the search box (with debounce)
+  useEffect(() => {
+    if (!backendBase) {
+      return;
+    }
+
+    // Clear features if search is empty
+    if (!searchText || searchText.length < 2) {
+      setFeatures([]);
+      setIsSearching(false);
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      performBackendSearch(searchText);
+    }, 500); // 500ms debounce
+
+    return () => clearTimeout(timeoutId);
+  }, [searchText, backendBase]);
 
   // Auto-search for planetary features when search text changes
   useEffect(() => {
@@ -1302,21 +1399,76 @@ export default function TileViewer({ externalSearchQuery, onSearchChange }: Tile
             </button>
           )}
         </div>
-        {filteredFeatures.length === 0 ? (
+        {isSearching ? (
+          <div style={{ color: "#666", padding: "16px", textAlign: "center" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
+              <Search size={16} />
+              <span>Searching...</span>
+            </div>
+          </div>
+        ) : filteredFeatures.length === 0 ? (
           <div style={{ color: "#888" }}>{features.length === 0 ? "No features loaded for this body." : "No features match your search."}</div>
         ) : (
           <ul style={{ listStyle: "none", padding: 0 }}>
             {filteredFeatures.map((f, i) => (
-              <li key={i} style={{ marginBottom: 8 }}>
-                <button style={{ width: "100%", textAlign: "left" }} onClick={() => panToLonLat(f.lon, f.lat, 6)}>
-                  <strong>{f.name}</strong>
-                  <div style={{ fontSize: 12 }}>{f.lat.toFixed(4)}, {f.lon.toFixed(4)} {f.diamkm ? `• ${f.diamkm} km` : ""}</div>
-                </button>
+              <li key={i} style={{ marginBottom: 8, border: "1px solid #333", borderRadius: 4, padding: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                  <button 
+                    style={{ flex: 1, textAlign: "left", background: "none", border: "none", cursor: "pointer", padding: 0 }} 
+                    onClick={() => panToLonLat(f.lon, f.lat, 6)}
+                  >
+                    <strong>{f.name}</strong>
+                    <div style={{ fontSize: 12, color: "#888" }}>
+                      {f.lat.toFixed(4)}, {f.lon.toFixed(4)} {f.diamkm ? `• ${f.diamkm} km` : ""}
+                    </div>
+                  </button>
+                  {f.id && (
+                    <button
+                      onClick={() => setSelectedFeatureForImages({
+                        id: f.id!,
+                        name: f.name,
+                        body: f.body || selectedBody,
+                        lat: f.lat,
+                        lon: f.lon,
+                      })}
+                      style={{
+                        padding: "4px 8px",
+                        fontSize: 11,
+                        background: "#4a90e2",
+                        color: "white",
+                        border: "none",
+                        borderRadius: 4,
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px"
+                      }}
+                      title="View detailed images"
+                    >
+                      <Camera size={14} />
+                      <span>Images</span>
+                    </button>
+                  )}
+                </div>
               </li>
             ))}
           </ul>
         )}
       </aside>
+
+      {/* Feature Image Viewer Modal */}
+      {selectedFeatureForImages && (
+        <FeatureImageViewer
+          featureId={selectedFeatureForImages.id}
+          featureName={selectedFeatureForImages.name}
+          targetBody={selectedFeatureForImages.body}
+          latitude={selectedFeatureForImages.lat}
+          longitude={selectedFeatureForImages.lon}
+          onClose={() => setSelectedFeatureForImages(null)}
+          backendUrl={backendBase}
+        />
+      )}
     </div>
   );
 }

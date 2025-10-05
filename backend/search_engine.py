@@ -14,15 +14,15 @@ class FeatureSearchEngine:
         features_file = Path('data/features/all_features.json')
         
         if not features_file.exists():
-            print(f"⚠️  Warning: {features_file} not found. Run: python backend/scripts/kmzparser.py moon")
+            print(f"Warning: {features_file} not found. Run: python backend/scripts/kmzparser.py moon")
             return
         
         try:
             with open(features_file, 'r', encoding='utf-8') as f:
                 self.features = json.load(f)
-            print(f"✓ Loaded {len(self.features)} planetary features")
+            print(f"Loaded {len(self.features)} planetary features")
         except Exception as e:
-            print(f"✗ Error loading features: {e}")
+            print(f"Error loading features: {e}")
     
     def search(self, query: str, body: Optional[str] = None, limit: int = 10) -> List[Dict]:
         """

@@ -59,7 +59,7 @@ def init_db() -> None:
     
     # Create all tables
     Base.metadata.create_all(bind=engine)
-    print(f"✅ Database initialized at: {database_url}")
+    print(f"Database initialized at: {database_url}")
 
 
 def get_db_engine():

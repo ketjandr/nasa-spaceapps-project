@@ -26,10 +26,10 @@ sys.path.insert(0, str(project_root))
 env_path = project_root / ".env"
 if env_path.exists():
     load_dotenv(env_path)
-    print(f"✅ Loaded environment from {env_path}")
+    print(f"Loaded environment from {env_path}")
 else:
-    print(f"⚠️  No .env file found at {env_path}")
-    print("   Looking for BACKEND_OPENAI_API_KEY in environment...")
+    print(f"No .env file found at {env_path}")
+    print("Looking for BACKEND_OPENAI_API_KEY in environment...")
 
 from backend.database import init_db, get_db_session, PlanetaryFeature
 from backend.ai_service import generate_embedding, create_searchable_text

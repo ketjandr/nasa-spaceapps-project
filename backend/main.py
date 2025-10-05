@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from .config import DatasetConfig, load_datasets
 from .schemas import DatasetListItem, ViewerConfig
+from .image_service import get_feature_images
 
 # Import DeepSeek-powered fast search router
 try:
@@ -176,3 +177,59 @@ async def proxy_kmz(url: str = Query(..., description="Remote KMZ URL")) -> Stre
             )
         },
     )
+
+
+@app.get("/features/{feature_id}/images")
+async def get_images_for_feature(
+    feature_id: int = Path(..., description="Feature ID from database"),
+    query: Optional[str] = Query(None, description="Original search query")
+):
+    """
+    Get all available images for a specific planetary feature.
+    Returns images from NASA Image Library, mission-specific archives, and TREK tiles.
+    """
+    from .database import get_db_session, PlanetaryFeature
+    
+    session = get_db_session()
+    try:
+        feature = session.query(PlanetaryFeature).filter(PlanetaryFeature.id == feature_id).first()
+        
+        if not feature:
+            raise HTTPException(status_code=404, detail="Feature not found")
+        
+        # Fetch images from various sources
+        images_data = await get_feature_images(
+            feature_name=feature.feature_name,
+            target_body=feature.target_body,
+            lat=feature.latitude,
+            lon=feature.longitude,
+            query=query
+        )
+        
+        return images_data
+        
+    finally:
+        session.close()
+
+
+@app.get("/images/search")
+async def search_feature_images(
+    feature_name: str = Query(..., description="Name of the feature"),
+    target_body: str = Query(..., description="Target body (moon, mars, etc.)"),
+    lat: float = Query(..., description="Latitude"),
+    lon: float = Query(..., description="Longitude"),
+    query: Optional[str] = Query(None, description="Original search query")
+):
+    """
+    Search for images of a planetary feature by name and location.
+    Does not require a feature ID from the database.
+    """
+    images_data = await get_feature_images(
+        feature_name=feature_name,
+        target_body=target_body,
+        lat=lat,
+        lon=lon,
+        query=query
+    )
+    
+    return images_data

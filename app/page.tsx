@@ -65,7 +65,6 @@ export default function Home() {
         {/* Feature highlights */}
         <div className="relative z-10 mt-16 grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto px-4">
           <div className="text-center p-6 bg-white/5 backdrop-blur-sm rounded-xl border border-white/10">
-            <div className="text-4xl mb-3">🌍</div>
             <h3 className="text-white font-semibold mb-2">Multiple Planets</h3>
             <p className="text-white/60 text-sm">Explore Moon, Mars, Mercury, and Ceres</p>
           </div>
@@ -73,12 +72,10 @@ export default function Home() {
             onClick={handleSurpriseClick}
             className="text-center p-6 bg-white/5 backdrop-blur-sm rounded-xl border border-white/10 hover:bg-white/10 hover:border-white/20 transition-all cursor-pointer"
           >
-            <div className="text-4xl mb-3">🙈</div>
             <h3 className="text-white font-semibold mb-2">Surprise me</h3>
-            <p className="text-white/60 text-sm">???</p>
+            <p className="text-white/60 text-sm">Coming soon</p>
           </button>
           <div className="text-center p-6 bg-white/5 backdrop-blur-sm rounded-xl border border-white/10">
-            <div className="text-4xl mb-3">🎯</div>
             <h3 className="text-white font-semibold mb-2">Feature Markers</h3>
             <p className="text-white/60 text-sm">Mark and discover planetary landmarks</p>
           </div>
@@ -88,7 +85,7 @@ export default function Home() {
       {/* Footer */}
       <footer className="relative py-6 px-4 text-center border-t border-white/10">
         <p className="text-white/40 text-sm">
-          Made with ❤️ by Slack Overflow
+          Made by Slack Overflow
         </p>
       </footer>
     </div>

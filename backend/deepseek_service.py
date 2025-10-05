@@ -1,9 +1,6 @@
 """
-DeepSeek API integration for fast, intelligent query processing.
-Replaces local sentence-transformers with API-based semantic understanding.
-
-Cost: ~$0.00003 per query (extremely cheap)
-Speed: ~200-500ms (much faster than local models)
+DeepSeek API integration for intelligent query processing.
+Provides fast semantic search with minimal cost.
 """
 
 import os
@@ -13,17 +10,14 @@ import httpx
 from dotenv import load_dotenv
 from pathlib import Path
 
-# Load environment variables
 env_path = Path(__file__).parent.parent / ".env"
 if env_path.exists():
     load_dotenv(env_path)
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
-
-# Free tier limits: Be conservative to stay within limits
-MAX_TOKENS_OUTPUT = 200  # Keep responses small
-REQUEST_TIMEOUT = 10  # seconds
+MAX_TOKENS_OUTPUT = 200
+REQUEST_TIMEOUT = 10
 
 
 async def parse_query_with_deepseek(query: str, target_body: Optional[str] = None) -> Dict[str, Any]:
@@ -87,8 +81,8 @@ Output: {"target_body": "Mercury", "size_filter": "large", "search_keywords": ["
                         {"role": "user", "content": user_prompt}
                     ],
                     "max_tokens": MAX_TOKENS_OUTPUT,
-                    "temperature": 0.1,  # Low temperature for consistent parsing
-                    "response_format": {"type": "json_object"}  # Force JSON output
+                    "temperature": 0.1,
+                    "response_format": {"type": "json_object"}
                 },
                 timeout=REQUEST_TIMEOUT
             )
@@ -98,7 +92,6 @@ Output: {"target_body": "Mercury", "size_filter": "large", "search_keywords": ["
                 content = result["choices"][0]["message"]["content"]
                 parsed = json.loads(content)
                 
-                # Add target_body from parameter if not detected
                 if target_body and not parsed.get("target_body"):
                     parsed["target_body"] = target_body
                 
@@ -117,16 +110,13 @@ Output: {"target_body": "Mercury", "size_filter": "large", "search_keywords": ["
 
 
 def _fallback_parser(query: str, target_body: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Simple keyword-based fallback parser when DeepSeek API is unavailable.
-    """
+    """Keyword-based fallback parser when DeepSeek API is unavailable."""
     query_lower = query.lower()
     result = {
         "confidence": 0.6,
         "search_keywords": []
     }
     
-    # Body detection
     body_keywords = {
         "moon": "Moon",
         "lunar": "Moon",
@@ -145,7 +135,6 @@ def _fallback_parser(query: str, target_body: Optional[str] = None) -> Dict[str,
     if target_body and "target_body" not in result:
         result["target_body"] = target_body
     
-    # Category detection
     if any(word in query_lower for word in ["crater", "impact", "basin"]):
         result["category"] = "crater"
     elif any(word in query_lower for word in ["mountain", "peak", "mons"]):
@@ -157,13 +146,11 @@ def _fallback_parser(query: str, target_body: Optional[str] = None) -> Dict[str,
     elif any(word in query_lower for word in ["sea", "mare", "plain"]):
         result["category"] = "mare"
     
-    # Size detection
     if any(word in query_lower for word in ["large", "big", "huge", "biggest", "largest", "massive"]):
         result["size_filter"] = "large"
     elif any(word in query_lower for word in ["small", "tiny", "smallest"]):
         result["size_filter"] = "small"
     
-    # Extract keywords (remove stop words)
     stop_words = {"show", "me", "find", "the", "on", "in", "at", "where", "are", "a", "an", "is"}
     words = query_lower.split()
     result["search_keywords"] = [w for w in words if w not in stop_words and len(w) > 2][:5]

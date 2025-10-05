@@ -33,6 +33,7 @@ class FeatureResult(BaseModel):
     origin: Optional[str] = None
     description: Optional[str] = None
     match_score: Optional[float] = None
+    image_url: Optional[str] = None  # Direct link to feature images endpoint
 
 
 class SearchResponse(BaseModel):
@@ -68,11 +69,11 @@ async def semantic_search(request: SearchRequest) -> SearchResponse:
         # Step 2: Build database query with filters
         db_query = session.query(PlanetaryFeature)
         
-        # Filter by target body
+        # Filter by target body (case-insensitive)
         target = parsed_query.get("target_body") or request.target_body
         if target:
             db_query = db_query.filter(
-                func.lower(PlanetaryFeature.target_body) == target.lower()
+                func.lower(PlanetaryFeature.target_body) == func.lower(target)
             )
         
         # Filter by category
@@ -81,12 +82,13 @@ async def semantic_search(request: SearchRequest) -> SearchResponse:
                 func.lower(PlanetaryFeature.category).like(f"%{category.lower()}%")
             )
         
-        # Filter by size
-        if size_filter := parsed_query.get("size_filter"):
-            if size_filter.lower() == "large":
-                db_query = db_query.filter(PlanetaryFeature.diameter > 50)
-            elif size_filter.lower() == "small":
-                db_query = db_query.filter(PlanetaryFeature.diameter < 10)
+        # Filter by size (currently disabled - database has no diameter data)
+        # Size filtering is done in keyword scoring instead
+        # if size_filter := parsed_query.get("size_filter"):
+        #     if size_filter.lower() == "large":
+        #         db_query = db_query.filter(PlanetaryFeature.diameter > 50)
+        #     elif size_filter.lower() == "small":
+        #         db_query = db_query.filter(PlanetaryFeature.diameter < 10)
         
         # Limit results for performance
         features = db_query.limit(1000).all()
@@ -120,7 +122,8 @@ async def semantic_search(request: SearchRequest) -> SearchResponse:
                 diameter=feature.diameter,
                 origin=feature.origin,
                 description=feature.description,
-                match_score=round(score, 4)
+                match_score=round(score, 4),
+                image_url=f"/features/{feature.id}/images"  # Link to images endpoint
             ))
         
         # Step 5: Generate natural language summary (optional, only if results exist)
@@ -159,7 +162,8 @@ def _calculate_keyword_score(
     Calculate relevance score based on keyword matching.
     Fast alternative to embedding similarity.
     """
-    score = 0.0
+    # Start with base score for features that passed filtering
+    score = 1.0  # Base score for being in filtered results
     
     # Combine all searchable text
     feature_text = (
@@ -179,20 +183,26 @@ def _calculate_keyword_score(
             else:
                 score += 0.3
     
-    # Bonus for matching parsed category exactly
+    # Big bonus for matching parsed category exactly (most important)
     if parsed_query.get("category"):
         if parsed_query["category"].lower() in feature.category.lower():
-            score += 1.5
+            score += 2.0
     
-    # Bonus for size matches
-    if parsed_query.get("size_filter") == "large" and feature.diameter and feature.diameter > 100:
-        score += 0.5
-    elif parsed_query.get("size_filter") == "small" and feature.diameter and feature.diameter < 10:
-        score += 0.5
+    # Bonus for target body match
+    if parsed_query.get("target_body"):
+        if parsed_query["target_body"].lower() == feature.target_body.lower():
+            score += 1.0
     
-    # Apply confidence multiplier from DeepSeek
-    confidence = parsed_query.get("confidence", 0.8)
-    score *= confidence
+    # Bonus for size matches (even without diameter data, give partial credit)
+    if parsed_query.get("size_filter"):
+        if feature.diameter:
+            if parsed_query["size_filter"] == "large" and feature.diameter > 100:
+                score += 1.0
+            elif parsed_query["size_filter"] == "small" and feature.diameter < 10:
+                score += 1.0
+        else:
+            # No diameter data - give small bonus for having size in keywords
+            score += 0.2
     
     return score
 
