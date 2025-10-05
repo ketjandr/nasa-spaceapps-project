@@ -55,4 +55,9 @@ __pycache__/
 __pycache__/
 *.pyc
 *.pyo
+
+# Database files (SQLite, etc.)
+*.db
+*.sqlite
+*.sqlite3
 stellarcanvas.db
