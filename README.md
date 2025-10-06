@@ -1,5 +1,6 @@
 # Planetary Explorer
 2025 NASA Space Apps Challenge: https://www.spaceappschallenge.org/2025/find-a-team/slack-overflow/?tab=project
+
 Project Link: https://planetaryexplorer.vercel.app/
 
 ## Run
