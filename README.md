@@ -3,6 +3,11 @@
 
 Project Link: https://planetaryexplorer.vercel.app/
 
+To view the latest version of the project, refer to the fork that includes updates made after the hackathon.  
+These updates include support for the official Vercel deployment and other improvements.
+
+Fork Link: https://github.com/Koiiichi/planetaryexplorer-vercel
+
 ## Run
 1) `cp .env.example .env.local` and set:
    - `NEXT_PUBLIC_BACKEND_URL` if you expose FastAPI somewhere else
